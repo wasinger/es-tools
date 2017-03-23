@@ -1,0 +1,22 @@
+{
+    "name": "wa72/es-tools",
+    "description": "PHP Helper classes for Elasticsearch",
+    "type": "library",
+    "require": {
+        "php":"^7.0",
+        "elasticsearch/elasticsearch": "^5.1",
+        "psr/log":"1.*"
+    },
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Christoph Singer",
+            "email": "singer@webagentur72.de"
+        }
+    ],
+    "autoload":{
+        "psr-4":{
+            "Wa72\\ESTools\\":"src/"
+        }
+    }
+}
