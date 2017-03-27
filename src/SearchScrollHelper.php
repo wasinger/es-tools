@@ -27,13 +27,21 @@ class SearchScrollHelper
     }
 
     /**
-     * Perform a search with scrolling
+     * Perform a search with scrolling, useful for retrieving a great number of documents
      *
-     * @param string $index
+     * Usage example: List all document IDs of type "my_type" in index "my_index":
+     * ```php
+     * $sh = new SearchScrollHelper($elasticsearch_client);
+     * foreach ($sh->scrollSearch('my_index', ['type' => 'my_type', 'source' => false]) as $hit) {
+     *   echo $hit->_id;
+     * }
+     * ```
+     *
+     * @param string|array $index The index/indices to work on
      * @param array $options {
      *      @var mixed $query The query to pass to Elasticsearch, defaults to 'match_all'
      *      @var string $type The mapping type for Elasticsearch
-     *      @var array|bool $_source The _source parameter for Elasticsearch. Set to FALSE if you only want a list of document IDs.
+     *      @var array|bool $_source The _source parameter for Elasticsearch (i.e. an array of field names to return for each object). Set to FALSE if you only want document meta data (i.e. to obtain a list of existing document IDs). Defaults to TRUE (return all fields).
      *      @var int $size The size of the scroll window, default 100
      *      @var string $scroll The scroll timeout, default '10s'
      * }
@@ -52,8 +60,8 @@ class SearchScrollHelper
         while (true) {
             if (!$scroll_id) { // first search request
                 $search_request = [
-                    "scroll" => $scroll,
-                    "size" => $size,
+                    'scroll' => $scroll,
+                    'size' => $size,
                     'index' => $index,
                     'type' => $type,
                     'body' => [
@@ -67,8 +75,8 @@ class SearchScrollHelper
                 $response = $this->client->search($search_request);
             } else { // Execute a Scroll request
                 $response = $this->client->scroll([
-                        "scroll_id" => $scroll_id,
-                        "scroll" => $scroll
+                        'scroll_id' => $scroll_id,
+                        'scroll' => $scroll
                     ]
                 );
             }

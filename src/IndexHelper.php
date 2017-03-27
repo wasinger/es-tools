@@ -32,13 +32,13 @@ class IndexHelper
     }
 
     /**
-     * Cleanup index.
+     * Clean up index.
      *
      * This function lists all documents in the index and passes them to a "voter" function.
      * If this function returns TRUE the document is kept, if it returns FALSE the document
      * will be removed from the index.
      *
-     * @param callable $voter A function which accepts an ES document
+     * @param callable $voter A function which accepts an ES document as parameter and returns TRUE or FALSE
      * @param array $scroll_options Options passed to SearchScrollHelper::scrollSearch
      */
     public function cleanup(callable $voter, array $scroll_options)
