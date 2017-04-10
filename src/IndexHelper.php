@@ -22,6 +22,16 @@ class IndexHelper
     private $index;
 
     /**
+     * @var array
+     */
+    private $index_aliases = [];
+
+    /**
+     * @var array
+     */
+    private $analysis = [];
+
+    /**
      * @param \Elasticsearch\Client $client
      * @param string $index The name of the index to operate on
      */
@@ -64,4 +74,90 @@ class IndexHelper
         }
         if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::cleanup(): ' . $counter . ' documents deleted from index.');
     }
+
+    /**
+     * Prüfe, ob Index schon vorhandenen ist,
+     * und erstelle Mapping für den Type
+     *
+     * @param string $type
+     * @param array $mapping
+     */
+    public function check_index($type, $mapping = [])
+    {
+        // check whether index exists, if not create it
+        if (!$this->client->indices()->exists(['index' => $this->index])) {
+            if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::check_index: index ' . $this->index . " does not exist, create it");
+            $body = [];
+            if (!empty($this->analysis)) {
+                $body['settings'] = [
+                    'analysis' => $this->analysis
+                ];
+            }
+            if (!empty($mapping)) {
+                $body['mappings'] = [
+                    $type => $mapping
+                ];
+            }
+            $params = [
+                'index' => $this->index
+            ];
+            if (!empty($body)) {
+                $params['body'] = $body;
+            }
+            $this->client->indices()->create($params);
+            $alias_actions = [];
+            if (count($this->index_aliases)) {
+                foreach ($this->index_aliases as $alias) {
+                    $alias_actions[] = ['add' => ['index' => $this->index, 'alias' => $alias]];
+                }
+                $this->client->indices()->updateAliases([
+                    'index' => $this->index,
+                    'body' => [
+                        'actions' => $alias_actions
+                    ]
+                ]);
+            }
+        } elseif (!empty($mapping)) {
+            // Wiederholtes putMapping ist kein Problem,
+            // solange es keine Konflikte zu vorherigen Mappings
+            // sowie Mappings von anderen Types gibt.
+            // Im Falle eine Konfliktes gibt es eine Exception.
+            $this->client->indices()->putMapping([
+                'index' => $this->index,
+                'type' => $type,
+                'body' => [
+                    $type => $mapping
+                ]
+            ]);
+        }
+    }
+
+    /**
+     * Set Aliases for the current index
+     *
+     * @param array $index_aliases
+     */
+    public function setIndexAliases(array $index_aliases)
+    {
+        $this->index_aliases = $index_aliases;
+    }
+
+    /**
+     * @return array
+     */
+    public function getAnalysis(): array
+    {
+        return $this->analysis;
+    }
+
+    /**
+     * @param array $analysis
+     */
+    public function setAnalysis(array $analysis)
+    {
+        $this->analysis = $analysis;
+    }
+
+
+
 }
