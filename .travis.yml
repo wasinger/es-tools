@@ -1,0 +1,20 @@
+language: php
+php:
+  - 7.0
+  - 7.1
+  - 7.2
+
+env:
+  - ES_VERSION=5.6.5 ES_DOWNLOAD_URL=https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-${ES_VERSION}.tar.gz
+
+install:
+  - wget ${ES_DOWNLOAD_URL}
+  - tar -xzf elasticsearch-${ES_VERSION}.tar.gz
+  - ./elasticsearch-${ES_VERSION}/bin/elasticsearch &
+
+before_script:
+  - composer install --no-interaction --prefer-dist
+  - sleep 10
+
+script:
+  - vendor/bin/phpunit
