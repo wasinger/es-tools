@@ -45,29 +45,45 @@ class IndexHelper
      * @param string $index
      * @param array $mappings
      * @param array $settings
-     * @param array $options
+     * @param array $aliases
+     * @param array $options [
+     *      bool $use_alias Whether to use aliases
+     *      bool $reindex_data Whether to reindex data from an existing index to a newly created index
+     *  ]
      *
      * @return string|boolean The real name of the index, or false if an error occured
      */
-    public function prepareIndex($index, $mappings = [], $settings = [], $options = [])
+    public function prepareIndex($index, $mappings = [], $settings = [], $aliases = [], $options = [])
     {
         $use_alias = isset($options['use_alias']) ? $options['use_alias'] : false;
+        $reindex_data = isset($options['reindex_data']) ? $options['reindex_data'] : false;
 
         $name = $index;
 
         if (!$this->client->indices()->exists(['index' => $index])) {
+            // Index does not exist, create it
             if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " does not exist, create it");
             if ($use_alias) {
                 $name = $this->createNewIndexVersion($index, $mappings, $settings);
+                $aliases = array_merge($aliases, $index);
+                $this->setAliases($name, $aliases);
             } else {
                 $this->createIndex($index, $mappings, $settings);
                 $name = $index;
+                if (!empty($aliases)) {
+                    $this->setAliases($index, $aliases);
+                }
             }
         } else {
+            // Index already exists, check analysis and mapping settings
             $analysis = isset($settings['analysis']) ? $settings['analysis'] : [];
             if ($this->diffMappings($index, $mappings) || $this->diffAnalysis($index, $analysis)) {
-                if ($use_alias) {
+                if ($use_alias && $reindex_data) {
+                    $name = $this->reindexToNewIndexVersion($index, $mappings, $settings, $aliases);
+                } elseif ($use_alias) {
                     $name = $this->createNewIndexVersion($index, $mappings, $settings);
+                    // if we don't reindex existing data, we don't set the aliases for the newly created index
+                    if ($this->logger) $this->logger->warning('Wa72\ESTools\IndexHelper::prepareIndex: new version ' . $name . ' of ' . $index . " created, but no data reindexed and no aliases set");
                 } else {
                     $name = false;
                     if ($this->logger) $this->logger->error('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " exists, but settings do not match");
@@ -78,9 +94,11 @@ class IndexHelper
     }
 
     /**
+     * Check for differences between the mappings of an existing index and the given mappings
+     *
      * @param $index
      * @param $mappings
-     * @return array
+     * @return array The differences, empty array if settings match
      */
     public function diffMappings($index, $mappings)
     {
@@ -92,9 +110,11 @@ class IndexHelper
     }
 
     /**
+     * Check for differences between the analysis settings of an existing index and the given analysis settings
+     *
      * @param $index
      * @param $analysis
-     * @return array
+     * @return array The differences, empty array if settings match
      */
     public function diffAnalysis($index, $analysis)
     {
@@ -112,6 +132,8 @@ class IndexHelper
 
     /**
      * Create a new index with the name suffixed by an incremented number
+     *
+     * Does NOT set any aliases
      *
      * @param string $index
      * @param array $mappings
@@ -134,6 +156,7 @@ class IndexHelper
      * @param array $mappings
      * @param array $settings
      * @param array $aliases
+     * @return string The name of the new index version
      */
     public function reindexToNewIndexVersion($index, $mappings = [], $settings = [], $aliases = [])
     {
@@ -141,6 +164,7 @@ class IndexHelper
         $this->reindex($index, $new_index);
         $aliases = array_merge($aliases, $index);
         $this->setAliases($new_index, $aliases);
+        return $new_index;
     }
 
     /**
@@ -166,13 +190,17 @@ class IndexHelper
      *
      * @param string $index
      * @param array $aliases
+     * @param bool $remove_existing_index Whether to remove an existing index if it's name matches a given alias
      */
-    public function setAliases($index, array $aliases)
+    public function setAliases($index, array $aliases, $remove_existing_index = false)
     {
         if (!empty($aliases)) {
             $alias_actions = [];
             foreach ($aliases as $alias) {
                 $alias_actions[] = ['add' => ['index' => $index, 'alias' => $alias]];
+                if ($remove_existing_index && $this->isRealIndex($alias)) {
+                    $alias_actions[] = ['remove_index' => ['index' => $alias]];
+                }
             }
             $this->client->indices()->updateAliases([
                 'index' => $index,
@@ -181,6 +209,16 @@ class IndexHelper
                 ]
             ]);
         }
+    }
+
+    public function isRealIndex($index)
+    {
+        return $this->client->indices()->exists(['index' => $index]) && !$this->client->indices()->existsAlias(['name' => $index]);
+    }
+
+    public function isAlias($name)
+    {
+        return $this->client->indices()->existsAlias(['name' => $name]);
     }
 
     /**

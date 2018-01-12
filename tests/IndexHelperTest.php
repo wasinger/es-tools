@@ -71,9 +71,27 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
         $this->assertEquals($index . '-0', $new_index);
         $this->assertTrue($this->client->indices()->exists(['index' => $new_index]));
 
-        $this->client->indices()->delete(['index' => $index]);
-        $this->helper->setAliases($new_index, [$index]);
+        $this->assertTrue($this->helper->isRealIndex($index));
+//        $this->client->indices()->delete(['index' => $index]);
 
+        $this->helper->setAliases($new_index, [$index], true);
+
+        $this->assertFalse($this->helper->isRealIndex($index));
+        $this->assertTrue($this->helper->isAlias($index));
+
+        $this->assertTrue($this->client->indices()->exists(['index' => $index]));
+
+        $this->assertEmpty($this->helper->diffAnalysis($index, $this->default_settings['analysis']));
+        $this->assertEmpty($this->helper->diffMappings($index, $this->default_mapping));
+
+
+    }
+
+    public function testPrepareIndex()
+    {
+        $index = $this->prefix . 'secondindex';
+
+        $this->helper->prepareIndex($index, $this->default_mapping, $this->default_settings);
         $this->assertTrue($this->client->indices()->exists(['index' => $index]));
 
         $this->assertEmpty($this->helper->diffAnalysis($index, $this->default_settings['analysis']));
