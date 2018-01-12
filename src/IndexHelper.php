@@ -279,59 +279,59 @@ class IndexHelper
         }
     }
 
-    /**
-     * Prüfe, ob Index schon vorhandenen ist,
-     * und erstelle Mapping für den Type
-     *
-     * @param string index
-     * @param array $mappings
-     * @param array $analysis
-     * @param array $aliases
-     */
-    public function check_index($index, $mappings = [], $analysis = [], $aliases = [])
-    {
-        // check whether index exists, if not create it
-        if (!$this->client->indices()->exists(['index' => $index])) {
-            if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::check_index: index ' . $index . " does not exist, create it");
-            $body = [];
-            if (!empty($this->analysis)) {
-                $body['settings'] = [
-                    'analysis' => $analysis
-                ];
-            }
-            if (!empty($mapping)) {
-                $body['mappings'] = $mappings;
-            }
-            $params = [
-                'index' => $index
-            ];
-            if (!empty($body)) {
-                $params['body'] = $body;
-            }
-            $this->client->indices()->create($params);
-            $alias_actions = [];
-            if (!empty($aliases)) {
-                foreach ($aliases as $alias) {
-                    $alias_actions[] = ['add' => ['index' => $index, 'alias' => $alias]];
-                }
-                $this->client->indices()->updateAliases([
-                    'index' => $index,
-                    'body' => [
-                        'actions' => $alias_actions
-                    ]
-                ]);
-            }
-        } elseif (!empty($mappings)) {
-            // Wiederholtes putMapping ist kein Problem,
-            // solange es keine Konflikte zu vorherigen Mappings
-            // sowie Mappings von anderen Types gibt.
-            // Im Falle eine Konfliktes gibt es eine Exception.
-            $this->client->indices()->putMapping([
-                'index' => $index,
-                'body' => $mappings
-            ]);
-        }
-    }
+//    /**
+//     * Prüfe, ob Index schon vorhandenen ist,
+//     * und erstelle Mapping für den Type
+//     *
+//     * @param string index
+//     * @param array $mappings
+//     * @param array $analysis
+//     * @param array $aliases
+//     */
+//    public function check_index($index, $mappings = [], $analysis = [], $aliases = [])
+//    {
+//        // check whether index exists, if not create it
+//        if (!$this->client->indices()->exists(['index' => $index])) {
+//            if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::check_index: index ' . $index . " does not exist, create it");
+//            $body = [];
+//            if (!empty($this->analysis)) {
+//                $body['settings'] = [
+//                    'analysis' => $analysis
+//                ];
+//            }
+//            if (!empty($mapping)) {
+//                $body['mappings'] = $mappings;
+//            }
+//            $params = [
+//                'index' => $index
+//            ];
+//            if (!empty($body)) {
+//                $params['body'] = $body;
+//            }
+//            $this->client->indices()->create($params);
+//            $alias_actions = [];
+//            if (!empty($aliases)) {
+//                foreach ($aliases as $alias) {
+//                    $alias_actions[] = ['add' => ['index' => $index, 'alias' => $alias]];
+//                }
+//                $this->client->indices()->updateAliases([
+//                    'index' => $index,
+//                    'body' => [
+//                        'actions' => $alias_actions
+//                    ]
+//                ]);
+//            }
+//        } elseif (!empty($mappings)) {
+//            // Wiederholtes putMapping ist kein Problem,
+//            // solange es keine Konflikte zu vorherigen Mappings
+//            // sowie Mappings von anderen Types gibt.
+//            // Im Falle eine Konfliktes gibt es eine Exception.
+//            $this->client->indices()->putMapping([
+//                'index' => $index,
+//                'body' => $mappings
+//            ]);
+//        }
+//    }
     static function array_diff_assoc_recursive($array1, $array2)
     {
         $difference = [];
@@ -350,7 +350,7 @@ class IndexHelper
                 else
                 {
                     $new_diff = self::array_diff_assoc_recursive($value, $array2[$key]);
-                    if ($new_diff != FALSE)
+                    if (!empty($new_diff))
                     {
                         $difference[$key] = $new_diff;
                     }
