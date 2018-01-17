@@ -74,7 +74,7 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
         $this->assertTrue($this->helper->isRealIndex($index));
 //        $this->client->indices()->delete(['index' => $index]);
 
-        $this->helper->setAliases($new_index, [$index], true);
+        $this->helper->switchAlias($index, $new_index);
 
         $this->assertFalse($this->helper->isRealIndex($index));
         $this->assertTrue($this->helper->isAlias($index));
@@ -97,5 +97,25 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
         $this->assertEmpty($this->helper->diffAnalysis($index, $this->default_settings['analysis']));
         $this->assertEmpty($this->helper->diffMappings($index, $this->default_mapping));
 
+    }
+
+    public function testGetCurrentVersionIndexName()
+    {
+        $index = $this->prefix . 'thirdindex';
+
+        // $alias does not exist
+        $this->assertEquals(false, $this->helper->getCurrentIndexVersionName($index));
+
+        $this->helper->createIndex($index, $this->default_mapping, $this->default_settings);
+        $new_index = $this->helper->createNewIndexVersion($index, $this->default_mapping, $this->default_settings);
+        $this->assertEquals($index . '-0', $new_index);
+        $this->assertTrue($this->client->indices()->exists(['index' => $new_index]));
+
+        // alias $index for $new_index not set yet
+        $this->assertEquals($index, $this->helper->getCurrentIndexVersionName($index));
+
+        $this->helper->switchAlias($index, $new_index);
+
+        $this->assertEquals($new_index, $this->helper->getCurrentIndexVersionName($index));
     }
 }

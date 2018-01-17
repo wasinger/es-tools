@@ -2,6 +2,8 @@
 namespace Wa72\ESTools;
 
 use Elasticsearch\Client;
+use Elasticsearch\Common\Exceptions\Missing404Exception;
+use Iterator;
 use Psr\Log\LoggerAwareTrait;
 
 /**
@@ -17,8 +19,13 @@ class IndexHelper
      */
     private $client;
 
+    /**
+     * @var array
+     */
     private $options = [
-        'increment_separator' => '-'
+        'increment_separator' => '-',
+        'bulk_size' => 100,
+
     ];
 
     /**
@@ -65,10 +72,12 @@ class IndexHelper
             if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " does not exist, create it");
             if ($use_alias) {
                 $name = $this->createNewIndexVersion($index, $mappings, $settings);
+                if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " created as alias for " . $name);
                 $aliases = array_merge($aliases, $index);
                 $this->setAliases($name, $aliases);
             } else {
                 $this->createIndex($index, $mappings, $settings);
+                if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " created.");
                 $name = $index;
                 if (!empty($aliases)) {
                     $this->setAliases($index, $aliases);
@@ -78,15 +87,17 @@ class IndexHelper
             // Index already exists, check analysis and mapping settings
             $analysis = isset($settings['analysis']) ? $settings['analysis'] : [];
             if ($this->diffMappings($index, $mappings) || $this->diffAnalysis($index, $analysis)) {
+                if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " exists, but settings are not correct.");
                 if ($use_alias && $reindex_data) {
                     $name = $this->reindexToNewIndexVersion($index, $mappings, $settings, $aliases);
                 } elseif ($use_alias) {
                     $name = $this->createNewIndexVersion($index, $mappings, $settings);
                     // if we don't reindex existing data, we don't set the aliases for the newly created index
+                    // use $this->switchAlias() to set the alias after indexing data to the new index
                     if ($this->logger) $this->logger->warning('Wa72\ESTools\IndexHelper::prepareIndex: new version ' . $name . ' of ' . $index . " created, but no data reindexed and no aliases set");
                 } else {
                     $name = false;
-                    if ($this->logger) $this->logger->error('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " exists, but settings do not match");
+                    if ($this->logger) $this->logger->error('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " exists, but settings do not match.");
                 }
             }
         }
@@ -142,9 +153,75 @@ class IndexHelper
      */
     public function createNewIndexVersion($index, $mappings = [], $settings = [])
     {
-        $newname = $this->getNextFreeIndexName($index);
+        $newname = $this->getNextIndexVersionName($index);
         $this->createIndex($newname, $mappings, $settings);
         return $newname;
+    }
+
+    /**
+     * Switch an alias name to a new index
+     * (The new index must be created before)
+     *
+     * This function also copies all additional alias names from the old real index
+     * to the new index.
+     *
+     *
+     * @param string $alias The index alias
+     * @param string $real_index The real index name to which alias should point
+     * @param array $additional_aliases Additional aliases to be set
+     * @return boolean
+     */
+    public function switchAlias($alias, $real_index, $additional_aliases = [])
+    {
+        $old_real_index = null;
+        $old_aliases = [];
+        try {
+            $data = $this->client->indices()->getAlias(['name' => $alias]);
+            // the alias must point to exactly 1 index
+            if (count($data) == 1) {
+                $old_real_index = array_keys($data)[0];
+                $old_aliases = $data[$old_real_index]['aliases'];
+                unset($old_aliases[$alias]);
+                $old_aliases = array_keys($old_aliases);
+            } else {
+                return false;
+            }
+        } catch (Missing404Exception $e) {
+            // alias does not exist, check whether there is an index with this name
+            if ($this->client->indices()->exists(['index' => $alias])) {
+                // the given alias name is an existing index
+                $old_real_index = $alias;
+                $old_aliases = array_keys($this->client->indices()->getAlias(['index' => $alias])[$alias]['aliases']);
+            }
+        }
+
+        $alias_actions = [];
+        $alias_actions[] = ['add' => ['index' => $real_index, 'alias' => $alias]];
+        if ($alias === $old_real_index) { // The alias is an existing index
+            $alias_actions[] = ['remove_index' => ['index' => $alias]];
+        } else if ($old_real_index) {
+            $alias_actions[] = ['remove' => ['index' => $old_real_index, 'alias' => $alias]];
+        }
+
+        // set additional aliases
+        $add_aliases = array_merge($old_aliases, $additional_aliases);
+        if (!empty($add_aliases)) {
+            foreach($add_aliases as $add_alias) {
+                $alias_actions[] = ['add' => ['index' => $real_index, 'alias' => $add_alias]];
+                if ($old_real_index && in_array($add_alias, $old_aliases)) {
+                    // remove the aliases from the old index
+                    $alias_actions[] = ['remove' => ['index' => $old_real_index, 'alias' => $add_alias]];
+                }
+            }
+        }
+
+        $this->client->indices()->updateAliases([
+            'body' => [
+                'actions' => $alias_actions
+            ]
+        ]);
+
+        return true;
     }
 
     /**
@@ -155,16 +232,131 @@ class IndexHelper
      * @param string $index
      * @param array $mappings
      * @param array $settings
-     * @param array $aliases
+     * @param array $aliases Additional aliases to be set on the new index version
      * @return string The name of the new index version
      */
     public function reindexToNewIndexVersion($index, $mappings = [], $settings = [], $aliases = [])
     {
         $new_index = $this->createNewIndexVersion($index, $mappings, $settings);
         $this->reindex($index, $new_index);
-        $aliases = array_merge($aliases, $index);
-        $this->setAliases($new_index, $aliases);
+        $this->switchAlias($index, $new_index, $aliases);
         return $new_index;
+    }
+
+    /**
+     * Create a new index with the name suffixed by an incremented number,
+     * index fresh data to the new index
+     * and set the original index name as alias to the new index
+     *
+     * $data may be a Generator
+     *
+     * @param Iterator|array $documents
+     * @param string $index The name of the index
+     * @param array $mappings
+     * @param array $settings
+     * @param array $aliases
+     * @return string The name of the new index version
+     */
+    public function indexToNewIndexVersion($documents, $index, $mappings = [], $settings = [], $aliases = [])
+    {
+        $new_index = $this->createNewIndexVersion($index, $mappings, $settings);
+        $this->bulkIndex($index, $documents);
+        $this->switchAlias($index, $new_index, $aliases);
+        return $new_index;
+    }
+
+    /**
+     * @param string $index The index name
+     * @param Iterator|array $documents The documents to index; may be the result of a Generator function
+     * @param string|null $type The default mapping type for the documents. If not set, all documents must
+     *                          have a _type key when using an elasticsearch version that still requires a mapping type.
+     * @return array The _id values of the successfully indexed documents
+     */
+    public function bulkIndex($index, $documents, $type = null)
+    {
+        $bulk_queries = array_filter([
+            'index' => $index,
+            'type' => $type,
+            'body' => []
+        ]);
+        $count = 0;
+        $ids = [];
+
+        foreach($documents as $document) {
+            if ($this->logger) $this->logger->debug('Indexing document: ' . $document['_id']);
+            $count++;
+            $bulk_queries['body'][] = [
+                'index' => array_filter(
+                    [
+                        '_type' => isset($document['_type']) ? $document['_type'] : null,
+                        '_id' => isset($document['_id']) ? $document['_id'] : null,
+                        '_ttl' => isset($document['_ttl']) ? $document['_ttl'] : null,
+                        '_routing' => isset($document['_routing']) ? $document['_routing'] : null,
+                        '_parent' => isset($document['_parent']) ? $document['_parent'] : null,
+                    ]
+                )
+            ];
+            unset($document['_type'], $document['_id'], $document['_ttl'], $document['_routing'], $document['_parent']);
+            $bulk_queries['body'][] = $document;
+            if ($count % $this->options['bulk_size'] == 0) {
+                $response = $this->client->bulk($bulk_queries);
+                $ids = array_merge($ids, $this->_evaluateBulkIndexResponse($response));
+                $bulk_queries['body'] = [];
+            }
+        }
+        $response = $this->client->bulk($bulk_queries);
+        $ids = array_merge($ids, $this->_evaluateBulkIndexResponse($response));
+        if ($this->logger) $this->logger->info('Documents indexed: ' . count($ids));
+        return $ids;
+    }
+
+    private function _evaluateBulkIndexResponse(&$response)
+    {
+        if ($response['errors']) {
+            // in case of errors we need to loop over items
+            // and check where at least one shard was successful
+            $ids = [];
+            foreach ($response['items'] as $item) {
+                $item = $item['index'];
+                if (isset($item['_shards']['successful']) && $item['_shards']['successful'] >= 1) {
+                    $ids[] = $item['_id'];
+                } else if (isset($item['error'])) {
+                    if ($this->logger) $this->logger->error(sprintf('Bulk index error: index %s, id %s, error type: %s, Reason: %s', $item['_index'], $item['_id'], $item['error']['type'], $item['error']['reason']));
+                }
+            }
+        } else {
+            $items = array_column($response['items'], 'index');
+            $ids = array_column($items, '_id');
+        }
+        return $ids;
+    }
+
+    /**
+     * Get the real versioned index name for which an index name is an alias
+     *
+     * @param string $index The basename of an index that is an alias for an index version
+     * @return string|boolean The index version name (the real index to which $index points)
+     */
+    public function getCurrentIndexVersionName($index)
+    {
+        try {
+            $aliases = $this->client->indices()->getAlias(['name' => $index]);
+        } catch (Missing404Exception $e) {
+            // no alias with this name
+            if ($this->client->indices()->exists(['index' => $index])) {
+                // if the given index name is a real index, return the index name
+                return $index;
+            } else {
+                // the given index does not exist
+                return false;
+            }
+        }
+        // check if the found alias points to exactly one index
+        if (count($aliases) == 1) {
+            return array_keys($aliases)[0];
+        }
+        // the alias points to more than one index, which is not allowed for index version aliases
+        return false;
     }
 
     /**
@@ -173,7 +365,7 @@ class IndexHelper
      * @param string $index The base name of the index
      * @return string The incremented index name
      */
-    public function getNextFreeIndexName($index)
+    public function getNextIndexVersionName($index)
     {
         $basename = $index;
         $i = 0;
@@ -190,17 +382,13 @@ class IndexHelper
      *
      * @param string $index
      * @param array $aliases
-     * @param bool $remove_existing_index Whether to remove an existing index if it's name matches a given alias
      */
-    public function setAliases($index, array $aliases, $remove_existing_index = false)
+    public function setAliases($index, array $aliases)
     {
         if (!empty($aliases)) {
             $alias_actions = [];
             foreach ($aliases as $alias) {
                 $alias_actions[] = ['add' => ['index' => $index, 'alias' => $alias]];
-                if ($remove_existing_index && $this->isRealIndex($alias)) {
-                    $alias_actions[] = ['remove_index' => ['index' => $alias]];
-                }
             }
             $this->client->indices()->updateAliases([
                 'index' => $index,
@@ -303,6 +491,8 @@ class IndexHelper
         }
         $result = $this->client->indices()->create($params);
 
+
+
         if (!empty($aliases)) {
             $alias_actions = [];
             foreach ($aliases as $alias) {
@@ -317,59 +507,6 @@ class IndexHelper
         }
     }
 
-//    /**
-//     * Prüfe, ob Index schon vorhandenen ist,
-//     * und erstelle Mapping für den Type
-//     *
-//     * @param string index
-//     * @param array $mappings
-//     * @param array $analysis
-//     * @param array $aliases
-//     */
-//    public function check_index($index, $mappings = [], $analysis = [], $aliases = [])
-//    {
-//        // check whether index exists, if not create it
-//        if (!$this->client->indices()->exists(['index' => $index])) {
-//            if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::check_index: index ' . $index . " does not exist, create it");
-//            $body = [];
-//            if (!empty($this->analysis)) {
-//                $body['settings'] = [
-//                    'analysis' => $analysis
-//                ];
-//            }
-//            if (!empty($mapping)) {
-//                $body['mappings'] = $mappings;
-//            }
-//            $params = [
-//                'index' => $index
-//            ];
-//            if (!empty($body)) {
-//                $params['body'] = $body;
-//            }
-//            $this->client->indices()->create($params);
-//            $alias_actions = [];
-//            if (!empty($aliases)) {
-//                foreach ($aliases as $alias) {
-//                    $alias_actions[] = ['add' => ['index' => $index, 'alias' => $alias]];
-//                }
-//                $this->client->indices()->updateAliases([
-//                    'index' => $index,
-//                    'body' => [
-//                        'actions' => $alias_actions
-//                    ]
-//                ]);
-//            }
-//        } elseif (!empty($mappings)) {
-//            // Wiederholtes putMapping ist kein Problem,
-//            // solange es keine Konflikte zu vorherigen Mappings
-//            // sowie Mappings von anderen Types gibt.
-//            // Im Falle eine Konfliktes gibt es eine Exception.
-//            $this->client->indices()->putMapping([
-//                'index' => $index,
-//                'body' => $mappings
-//            ]);
-//        }
-//    }
     static function array_diff_assoc_recursive($array1, $array2)
     {
         $difference = [];
