@@ -73,7 +73,7 @@ class IndexHelper
             if ($use_alias) {
                 $name = $this->createNewIndexVersion($index, $mappings, $settings);
                 if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " created as alias for " . $name);
-                $aliases = array_merge($aliases, $index);
+                array_push($aliases, $index);
                 $this->setAliases($name, $aliases);
             } else {
                 $this->createIndex($index, $mappings, $settings);
@@ -99,6 +99,9 @@ class IndexHelper
                     $name = false;
                     if ($this->logger) $this->logger->error('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " exists, but settings do not match.");
                 }
+            } else {
+                // settings are correct, get current real index if it is an alias
+                $name = $this->getCurrentIndexVersionName($index);
             }
         }
         return $name;
@@ -168,7 +171,7 @@ class IndexHelper
      *
      * @param string $alias The index alias
      * @param string $real_index The real index name to which alias should point
-     * @param array $additional_aliases Additional aliases to be set
+     * @param array $additional_aliases Additional aliases to be set on the new index (and removed from the old index)
      * @return boolean
      */
     public function switchAlias($alias, $real_index, $additional_aliases = [])
@@ -180,9 +183,10 @@ class IndexHelper
             // the alias must point to exactly 1 index
             if (count($data) == 1) {
                 $old_real_index = array_keys($data)[0];
-                $old_aliases = $data[$old_real_index]['aliases'];
-                unset($old_aliases[$alias]);
-                $old_aliases = array_keys($old_aliases);
+                $old_aliases = $this->getAliases($old_real_index);
+                if (($key = array_search($alias, $old_aliases)) !== false) {
+                    unset($old_aliases[$key]);
+                }
             } else {
                 return false;
             }
@@ -196,31 +200,31 @@ class IndexHelper
         }
 
         $alias_actions = [];
-        $alias_actions[] = ['add' => ['index' => $real_index, 'alias' => $alias]];
+
+        // remove alias from old index, or remove index if alias was an existing index
         if ($alias === $old_real_index) { // The alias is an existing index
             $alias_actions[] = ['remove_index' => ['index' => $alias]];
         } else if ($old_real_index) {
             $alias_actions[] = ['remove' => ['index' => $old_real_index, 'alias' => $alias]];
         }
 
+        // set the new alias
+        $alias_actions[] = ['add' => ['index' => $real_index, 'alias' => $alias]];
+
         // set additional aliases
-        $add_aliases = array_merge($old_aliases, $additional_aliases);
-        if (!empty($add_aliases)) {
-            foreach($add_aliases as $add_alias) {
-                $alias_actions[] = ['add' => ['index' => $real_index, 'alias' => $add_alias]];
-                if ($old_real_index && in_array($add_alias, $old_aliases)) {
-                    // remove the aliases from the old index
-                    $alias_actions[] = ['remove' => ['index' => $old_real_index, 'alias' => $add_alias]];
-                }
+        $add_aliases = array_unique(array_merge($old_aliases, $additional_aliases));
+        foreach($add_aliases as $add_alias) {
+            $alias_actions[] = ['add' => ['index' => $real_index, 'alias' => $add_alias]];
+            if ($old_real_index !== $alias && in_array($add_alias, $old_aliases)) {
+                // remove the aliases from the old index
+                $alias_actions[] = ['remove' => ['index' => $old_real_index, 'alias' => $add_alias]];
             }
         }
-
-        $this->client->indices()->updateAliases([
+        $response = $this->client->indices()->updateAliases([
             'body' => [
                 'actions' => $alias_actions
             ]
         ]);
-
         return true;
     }
 
@@ -407,6 +411,20 @@ class IndexHelper
     public function isAlias($name)
     {
         return $this->client->indices()->existsAlias(['name' => $name]);
+    }
+
+    /**
+     * Get all aliases of a given index
+     *
+     * @param $index
+     * @return array
+     */
+    public function getAliases($index)
+    {
+        $response = $this->client->indices()->getAliases(['index' => $index]);
+        $indices = array_keys($response);
+        if ($indices[0] !== $index) throw new \InvalidArgumentException('Argument $index must be a real index, not alias');
+        return array_keys($response[$index]['aliases']);
     }
 
     /**
