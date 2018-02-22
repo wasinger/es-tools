@@ -212,7 +212,11 @@ class IndexHelper
         $alias_actions[] = ['add' => ['index' => $real_index, 'alias' => $alias]];
 
         // set additional aliases
-        $add_aliases = array_unique(array_merge($old_aliases, $additional_aliases));
+        if (!empty($additional_aliases)) {
+            $add_aliases = array_unique(array_merge($old_aliases, $additional_aliases));
+        } else {
+            $add_aliases = $old_aliases;
+        }
         foreach($add_aliases as $add_alias) {
             $alias_actions[] = ['add' => ['index' => $real_index, 'alias' => $add_alias]];
             if ($old_real_index !== $alias && in_array($add_alias, $old_aliases)) {
