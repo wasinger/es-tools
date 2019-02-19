@@ -65,6 +65,9 @@ class IndexHelper
         $use_alias = isset($options['use_alias']) ? $options['use_alias'] : false;
         $reindex_data = isset($options['reindex_data']) ? $options['reindex_data'] : false;
 
+        if (isset($mappings['mappings'])) $mappings = $mappings['mappings'];
+        if (isset($settings['settings'])) $settings = $settings['settings'];
+
         $name = $index;
 
         if (!$this->client->indices()->exists(['index' => $index])) {
@@ -73,6 +76,7 @@ class IndexHelper
             if ($use_alias) {
                 $name = $this->createNewIndexVersion($index, $mappings, $settings);
                 if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " created as alias for " . $name);
+                if (!is_array($aliases)) $aliases = [];
                 array_push($aliases, $index);
                 $this->setAliases($name, $aliases);
             } else {
@@ -84,9 +88,8 @@ class IndexHelper
                 }
             }
         } else {
-            // Index already exists, check analysis and mapping settings
-            $analysis = isset($settings['analysis']) ? $settings['analysis'] : [];
-            if ($this->diffMappings($index, $mappings) || $this->diffAnalysis($index, $analysis)) {
+            // Index already exists, check settings and mapping
+            if ($this->diffMappings($index, $mappings) || $this->diffSettings($index, $settings)) {
                 if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " exists, but settings are not correct.");
                 if ($use_alias && $reindex_data) {
                     $name = $this->reindexToNewIndexVersion($index, $mappings, $settings, $aliases);
@@ -116,6 +119,7 @@ class IndexHelper
      */
     public function diffMappings($index, $mappings)
     {
+        if (isset($mappings['mappings'])) $mappings = $mappings['mappings'];
         $real_mappings = $this->client->indices()->getMapping(['index' => $index]);
         $key = array_keys($real_mappings)[0];
         $real_mappings = $real_mappings[$key]['mappings'];
@@ -124,22 +128,35 @@ class IndexHelper
     }
 
     /**
-     * Check for differences between the analysis settings of an existing index and the given analysis settings
+     * Check for differences between the settings of an existing index and the given settings
+     *
+     * Only the following settings that require reindexing are considered:
+     * - analysis
+     * - index.mapping.single_type
      *
      * @param $index
-     * @param $analysis
+     * @param $settings
      * @return array The differences, empty array if settings match
      */
-    public function diffAnalysis($index, $analysis)
+    public function diffSettings($index, $settings)
     {
+        if (isset($settings['settings'])) $settings = $settings['settings'];
         $real_settings = $this->client->indices()->getSettings(['index' => $index]);
         $key = array_keys($real_settings)[0];
         $real_settings = $real_settings[$key]['settings']['index'];
-        if (!empty($real_settings['analysis'])) {
-            $r = self::array_diff_assoc_recursive($analysis, $real_settings['analysis']);
-        } else {
-            // if real analysis settings are empty, the diff is just the specified settings
-            $r = $analysis;
+        $settings_to_consider = ['analysis', 'index.mapping.single_type'];
+        $r = [];
+        foreach ($settings_to_consider as $key) {
+            if (!isset($settings[$key])) continue;
+            if (!empty($real_settings[$key])) {
+                $diff = self::array_diff_assoc_recursive($settings[$key], $real_settings[$key]);
+                if (!empty($diff)) {
+                    $r[$key] = $diff;
+                }
+            } else {
+                // if real settings are empty, the diff is just the specified settings
+                if (!empty($settings[$key])) $r[$key] = $settings['key'];
+            }
         }
         return $r;
     }
@@ -499,6 +516,9 @@ class IndexHelper
     public function createIndex($index, $mappings = [], $settings = [], $aliases = [])
     {
         $body = [];
+        // normalize mappings and settings array
+        if (isset($mappings['mappings'])) $mappings = $mappings['mappings'];
+        if (isset($settings['settings'])) $settings = $settings['settings'];
         if (!empty($settings)) {
             $body['settings'] = $settings;
         }
@@ -512,8 +532,6 @@ class IndexHelper
             $params['body'] = $body;
         }
         $result = $this->client->indices()->create($params);
-
-
 
         if (!empty($aliases)) {
             $alias_actions = [];
@@ -529,6 +547,15 @@ class IndexHelper
         }
     }
 
+    /**
+     * Check that all keys from $array1 are present in $array2 and have the same value
+     *
+     * additional elements from $array2 are ignored
+     *
+     * @param array $array1
+     * @param array $array2
+     * @return array Array containing elements from array1 that have no match in array2
+     */
     static function array_diff_assoc_recursive($array1, $array2)
     {
         $difference = [];
