@@ -66,7 +66,7 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
 
         $this->assertTrue($this->client->indices()->exists(['index' => $index]));
 
-        $this->assertEmpty($this->helper->diffAnalysis($index, $this->default_settings['analysis']));
+        $this->assertEmpty($this->helper->diffSettings($index, $this->default_settings));
         $this->assertEmpty($this->helper->diffMappings($index, $this->default_mapping));
 
         $new_index = $this->helper->createNewIndexVersion($index, $this->default_mapping, $this->default_settings);
@@ -83,7 +83,7 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
 
         $this->assertTrue($this->client->indices()->exists(['index' => $index]));
 
-        $this->assertEmpty($this->helper->diffAnalysis($index, $this->default_settings['analysis']));
+        $this->assertEmpty($this->helper->diffSettings($index, $this->default_settings));
         $this->assertEmpty($this->helper->diffMappings($index, $this->default_mapping));
     }
 
@@ -100,7 +100,7 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
         $this->assertTrue($this->client->indices()->exists(['index' => $index]));
         $this->assertFalse($this->helper->isAlias($index));
         $this->assertEquals($index, $new_index);
-        $this->assertEmpty($this->helper->diffAnalysis($index, $this->default_settings['analysis']));
+        $this->assertEmpty($this->helper->diffSettings($index, $this->default_settings));
         $this->assertEmpty($this->helper->diffMappings($index, $this->default_mapping));
         $this->assertEquals($aliases, $this->helper->getAliases($index));
 
@@ -115,7 +115,7 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
         $this->assertTrue($this->helper->isAlias($index));
         $this->assertFalse($this->helper->isRealIndex($index));
         $this->assertEquals($new_index, $this->helper->getCurrentIndexVersionName($index));
-        $this->assertEmpty($this->helper->diffAnalysis($index, $this->default_settings['analysis']));
+        $this->assertEmpty($this->helper->diffSettings($index, $this->default_settings));
         $this->assertEmpty($this->helper->diffMappings($index, $mapping));
         $this->assertArraySubset($aliases, $this->helper->getAliases($new_index));
 
@@ -130,7 +130,7 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
         $this->assertTrue($this->helper->isAlias($index));
         $this->assertFalse($this->helper->isRealIndex($index));
         $this->assertEquals($new_index1, $this->helper->getCurrentIndexVersionName($index));
-        $this->assertEmpty($this->helper->diffAnalysis($new_index1, $this->default_settings['analysis']));
+        $this->assertEmpty($this->helper->diffSettings($new_index1, $this->default_settings));
         $this->assertEmpty($this->helper->diffMappings($new_index1, $mapping));
         $this->assertArraySubset($aliases, $this->helper->getAliases($new_index1));
         // the old index version should not have aliases any more
