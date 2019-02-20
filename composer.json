@@ -4,7 +4,7 @@
     "type": "library",
     "require": {
         "php":"^7.0",
-        "elasticsearch/elasticsearch": "^5.1",
+        "elasticsearch/elasticsearch": "^5",
         "psr/log":"1.*"
     },
     "require-dev": {
