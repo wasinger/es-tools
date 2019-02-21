@@ -3,7 +3,7 @@
     "description": "PHP Helper classes for Elasticsearch",
     "type": "library",
     "require": {
-        "php":"^7.0",
+        "php":"^7.1",
         "elasticsearch/elasticsearch": "^5|^6",
         "psr/log":"1.*"
     },

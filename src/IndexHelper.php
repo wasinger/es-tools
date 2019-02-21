@@ -292,12 +292,12 @@ class IndexHelper
 
     /**
      * @param string $index The index name
-     * @param Iterator|array $documents The documents to index; may be the result of a Generator function
+     * @param iterable $documents The documents to index; may be the result of a Generator function
      * @param string|null $type The default mapping type for the documents. If not set, all documents must
      *                          have a _type key when using an elasticsearch version that still requires a mapping type.
      * @return array The _id values of the successfully indexed documents
      */
-    public function bulkIndex($index, $documents, $type = null)
+    public function bulkIndex($index, iterable $documents, $type = null)
     {
         $bulk_queries = array_filter([
             'index' => $index,
