@@ -89,7 +89,7 @@ class IndexHelper
             }
         } else {
             // Index already exists, check settings and mapping
-            if ($this->diffMappings($index, $mappings) || $this->diffSettings($index, $settings)) {
+            if ($this->diffMappings($index, $mappings) || $this->diffIndexSettings($index, $settings)) {
                 if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " exists, but settings are not correct.");
                 if ($use_alias && $reindex_data) {
                     $name = $this->reindexToNewIndexVersion($index, $mappings, $settings, $aliases);
@@ -128,23 +128,71 @@ class IndexHelper
     }
 
     /**
+     * Normalize index settings for elasticsearch
+     *
+     * - if a key "settings" exists, only the value of this key is used
+     * - if a key "index" exists, this key is dropped and the value of this key is merged into the $settings array
+     * - dot notation ('index.mapping.single_type') is converted to array ($settings['mapping']['single_type'])
+     *
+     * The resulting array should have the same structure as the subkey [INDEX_NAME]['settings']['index']
+     * of the structure returned by the _settings endpoint form elasticsearch
+     *
+     *
+     * @param array $settings
+     * @return array mixed
+     */
+    public function normalizeIndexSettings($settings)
+    {
+        if (isset($settings['settings'])) $settings = $settings['settings'];
+
+        foreach ($settings as $key => $value) {
+            // move all settings out of "index" subkey
+            // ($settings['index']['analysis'] => $settings['analysis'])
+            if ($key == 'index' && is_array($value)) {
+                foreach ($value as $k1 => $v1) {
+                    $settings[$k1] = $v1;
+                }
+                unset($settings['index']);
+            }
+
+            // normalize dot notation
+            // ('index.mapping.single_type' => $settings['mapping']['single_type'])
+            if (strpos($key, '.')) {
+                $segments = \explode('.', $key);
+                $basevar = $settings;
+                foreach ($segments as $no => $segment) {
+                    if ($segment == 'index') continue;
+                    if ($no + 1 < count($segments)) {
+                        $basevar[$segment] = [];
+                        $basevar = $basevar[$segment];
+                    } else {
+                        $basevar = $value;
+                    }
+                }
+            }
+
+        }
+        return $settings;
+    }
+
+    /**
      * Check for differences between the settings of an existing index and the given settings
      *
      * Only the following settings that require reindexing are considered:
      * - analysis
-     * - index.mapping.single_type
+     * - mapping (e.g. index.mapping.single_type)
      *
      * @param $index
      * @param $settings
      * @return array The differences, empty array if settings match
      */
-    public function diffSettings($index, $settings)
+    public function diffIndexSettings($index, $settings)
     {
-        if (isset($settings['settings'])) $settings = $settings['settings'];
+        $settings = $this->normalizeIndexSettings($settings);
         $real_settings = $this->client->indices()->getSettings(['index' => $index]);
         $key = array_keys($real_settings)[0];
         $real_settings = $real_settings[$key]['settings']['index'];
-        $settings_to_consider = ['analysis', 'index.mapping.single_type'];
+        $settings_to_consider = ['analysis', 'mapping'];
         $r = [];
         foreach ($settings_to_consider as $key) {
             if (!isset($settings[$key])) continue;
@@ -155,7 +203,7 @@ class IndexHelper
                 }
             } else {
                 // if real settings are empty, the diff is just the specified settings
-                if (!empty($settings[$key])) $r[$key] = $settings['key'];
+                if (!empty($settings[$key])) $r[$key] = $settings[$key];
             }
         }
         return $r;
