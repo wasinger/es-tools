@@ -110,6 +110,11 @@ class IndexHelper
         return $name;
     }
 
+    public function exists($index)
+    {
+        return $this->client->indices()->exists(['index' => $index]);
+    }
+
     /**
      * Check for differences between the mappings of an existing index and the given mappings
      *
