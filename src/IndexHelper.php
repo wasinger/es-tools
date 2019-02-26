@@ -120,7 +120,9 @@ class IndexHelper
      *
      * @param $index
      * @param $mappings
-     * @return array The differences, empty array if settings match
+     * @return array    The differences, empty array if settings match
+     *                  Settings to be added are under the "+" key.
+     *                  Settings to be removed from the index are under "-" key.
      */
     public function diffMappings($index, $mappings)
     {
@@ -128,7 +130,15 @@ class IndexHelper
         $real_mappings = $this->client->indices()->getMapping(['index' => $index]);
         $key = array_keys($real_mappings)[0];
         $real_mappings = $real_mappings[$key]['mappings'];
-        $r = self::array_diff_assoc_recursive($mappings, $real_mappings);
+        $r1 = self::array_diff_assoc_recursive($mappings, $real_mappings);
+        $r2 = self::array_diff_assoc_recursive($real_mappings, $mappings);
+        $r = [];
+        if (!empty($r1)) {
+            $r['+'] = $r1;
+        }
+        if (!empty($r2)) {
+            $r['-'] = $r2;
+        }
         return $r;
     }
 
@@ -189,7 +199,9 @@ class IndexHelper
      *
      * @param $index
      * @param $settings
-     * @return array The differences, empty array if settings match
+     * @return array    The differences, empty array if settings match.
+     *                  Settings to be added are under the "+" key.
+     *                  Settings to be removed from the index are under "-" key.
      */
     public function diffIndexSettings($index, $settings)
     {
@@ -200,15 +212,19 @@ class IndexHelper
         $settings_to_consider = ['analysis', 'mapping'];
         $r = [];
         foreach ($settings_to_consider as $key) {
-            if (!isset($settings[$key])) continue;
+            if (!isset($settings[$key])) $settings[$key] = [];
             if (!empty($real_settings[$key])) {
                 $diff = self::array_diff_assoc_recursive($settings[$key], $real_settings[$key]);
                 if (!empty($diff)) {
-                    $r[$key] = $diff;
+                    $r['+'][$key] = $diff;
+                }
+                $diff2 = self::array_diff_assoc_recursive($real_settings[$key], $settings[$key]);
+                if (!empty($diff2)) {
+                    $r['-'][$key] = $diff2;
                 }
             } else {
                 // if real settings are empty, the diff is just the specified settings
-                if (!empty($settings[$key])) $r[$key] = $settings[$key];
+                if (!empty($settings[$key])) $r['+'][$key] = $settings[$key];
             }
         }
         return $r;
