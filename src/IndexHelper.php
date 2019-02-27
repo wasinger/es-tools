@@ -131,16 +131,7 @@ class IndexHelper
         $real_mappings = $this->client->indices()->getMapping(['index' => $index]);
         $key = array_keys($real_mappings)[0];
         $real_mappings = $real_mappings[$key]['mappings'];
-        $r1 = self::array_diff_assoc_recursive($mappings, $real_mappings);
-        $r2 = self::array_diff_assoc_recursive($real_mappings, $mappings);
-        $r = [];
-        if (!empty($r1)) {
-            $r['+'] = $r1;
-        }
-        if (!empty($r2)) {
-            $r['-'] = $r2;
-        }
-        return $r;
+        return self::compare_assoc_arrays($mappings, $real_mappings);
     }
 
     /**
@@ -223,11 +214,11 @@ class IndexHelper
             if (!empty($real_settings[$key])) {
                 $diff = self::array_diff_assoc_recursive($settings[$key], $real_settings[$key]);
                 if (!empty($diff)) {
-                    $r['+'][$key] = $diff;
+                    $r['-'][$key] = $diff;
                 }
                 $diff2 = self::array_diff_assoc_recursive($real_settings[$key], $settings[$key]);
                 if (!empty($diff2)) {
-                    $r['-'][$key] = $diff2;
+                    $r['+'][$key] = $diff2;
                 }
             } else {
                 // if real settings are empty, the diff is just the specified settings
@@ -483,21 +474,24 @@ class IndexHelper
      *
      * @param string $index
      * @param array $aliases
+     * @return array Response from server
      */
     public function setAliases($index, array $aliases)
     {
+        $r = [];
         if (!empty($aliases)) {
             $alias_actions = [];
             foreach ($aliases as $alias) {
                 $alias_actions[] = ['add' => ['index' => $index, 'alias' => $alias]];
             }
-            $this->client->indices()->updateAliases([
+            $r = $this->client->indices()->updateAliases([
                 'index' => $index,
                 'body' => [
                     'actions' => $alias_actions
                 ]
             ]);
         }
+        return $r;
     }
 
     public function isRealIndex($index)
@@ -634,33 +628,58 @@ class IndexHelper
      */
     static function array_diff_assoc_recursive($array1, $array2)
     {
-        $difference = [];
+        $d = [];
         foreach ($array1 as $key => $value)
         {
             if (is_array($value))
             {
-                if(!isset($array2[$key]))
-                {
-                    $difference[$key] = $value;
-                }
-                elseif (!is_array($array2[$key]))
-                {
-                    $difference[$key] = $value;
-                }
-                else
-                {
+                if(!isset($array2[$key]) || !is_array($array2[$key])) {
+                    $d[$key] = $value;
+                } else {
                     $new_diff = self::array_diff_assoc_recursive($value, $array2[$key]);
                     if (!empty($new_diff))
                     {
-                        $difference[$key] = $new_diff;
+                        $d[$key] = $new_diff;
                     }
                 }
             }
-            elseif (!isset($array2[$key]) || $array2[$key] != $value)
+            elseif (!\array_key_exists($key, $array2) || $array2[$key] != $value)
             {
-                $difference[$key] = $value;
+                $d[$key] = $value;
             }
         }
-        return $difference;
+        return $d;
+    }
+
+    /**
+     * Compute difference between two multidimensional associative arrays
+     *
+     * @param array $array1
+     * @param array $array2
+     * @return array $d Associative array:
+     *                  Key "-" contains elements from $array1 that have no match in $array2,
+     *                  Key "+" contains elements from $array2 that have no match in $array1,
+     *                  empty array if both input arrays are equal
+     */
+    static function compare_assoc_arrays($array1, $array2)
+    {
+        if (empty($array1) && empty($array2)) {
+            return [];
+        } elseif (empty($array1) && !empty($array2)) {
+            return ['+' => $array2];
+        } elseif (!empty($array1) && empty($array2)) {
+            return ['-' => $array1];
+        } else {
+            $d = [];
+            $d1 = self::array_diff_assoc_recursive($array1, $array2);
+            if (!empty($d1)) {
+                $d['-'] = $d1;
+            }
+            $d2 = self::array_diff_assoc_recursive($array2, $array1);
+            if (!empty($d2)) {
+                $d['+'] = $d2;
+            }
+            return $d;
+        }
     }
 }
