@@ -156,4 +156,41 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
 
         $this->assertEquals($new_index, $this->helper->getCurrentIndexVersionName($index));
     }
+
+    public function testNormalizeIndexSettings()
+    {
+        $settings = [
+            "index" => [
+                "analysis" => [
+                    "analyzer" => [
+                        "my_analyzer" => [
+                            "type" => "custom",
+                            "tokenizer" => "standard",
+                            "char_filter" => ["html_strip"],
+                            "filter" => ["lowercase", "asciifolding"]
+                        ]
+                    ]
+                ]
+            ],
+            "index.mapping.single_type" => true
+        ];
+
+        $normalized = [
+            "analysis" => [
+                "analyzer" => [
+                    "my_analyzer" => [
+                        "type" => "custom",
+                        "tokenizer" => "standard",
+                        "char_filter" => ["html_strip"],
+                        "filter" => ["lowercase", "asciifolding"]
+                    ]
+                ]
+            ],
+            "mapping" => [
+                "single_type" => true
+            ]
+        ];
+
+        $this->assertEquals($normalized, $this->helper->normalizeIndexSettings($settings));
+    }
 }

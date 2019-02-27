@@ -127,6 +127,7 @@ class IndexHelper
     public function diffMappings($index, $mappings)
     {
         if (isset($mappings['mappings'])) $mappings = $mappings['mappings'];
+        self::normalizeDotPathNotation($mappings);
         $real_mappings = $this->client->indices()->getMapping(['index' => $index]);
         $key = array_keys($real_mappings)[0];
         $real_mappings = $real_mappings[$key]['mappings'];
@@ -160,34 +161,40 @@ class IndexHelper
     {
         if (isset($settings['settings'])) $settings = $settings['settings'];
 
+        self::normalizeDotPathNotation($settings);
+
+        // move all settings out of "index" subkey
+        // ($settings['index']['analysis'] => $settings['analysis'])
         foreach ($settings as $key => $value) {
-            // move all settings out of "index" subkey
-            // ($settings['index']['analysis'] => $settings['analysis'])
             if ($key == 'index' && is_array($value)) {
                 foreach ($value as $k1 => $v1) {
                     $settings[$k1] = $v1;
                 }
                 unset($settings['index']);
             }
-
-            // normalize dot notation
-            // ('index.mapping.single_type' => $settings['mapping']['single_type'])
-            if (strpos($key, '.')) {
-                $segments = \explode('.', $key);
-                $basevar = $settings;
-                foreach ($segments as $no => $segment) {
-                    if ($segment == 'index') continue;
-                    if ($no + 1 < count($segments)) {
-                        $basevar[$segment] = [];
-                        $basevar = $basevar[$segment];
-                    } else {
-                        $basevar = $value;
-                    }
-                }
-            }
-
         }
         return $settings;
+    }
+
+    /**
+     * normalize dot path notation
+     * $array['index.mapping.single_type'] -> $array['index']['mapping']['single_type']
+     *
+     * @param $array
+     */
+    static function normalizeDotPathNotation(&$array)
+    {
+        foreach ($array as $key => $value) {
+            if (strpos($key, '.')) {
+                $segments = \explode('.', $key);
+                $a = &$array;
+                foreach ($segments as $segment) {
+                    $a = &$a[$segment];
+                }
+                $a = $value;
+                unset($array[$key]);
+            }
+        }
     }
 
     /**
