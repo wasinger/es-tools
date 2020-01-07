@@ -89,10 +89,13 @@ class IndexHelper
             }
         } else {
             // Index already exists, check settings and mapping
-            if ($this->diffMappings($index, $mappings) || $this->diffIndexSettings($index, $settings)) {
+            $dm = $this->diffMappings($index, $mappings);
+            $ds = $this->diffIndexSettings($index, $settings);
+            if (!empty($dm['-']) || $ds) {
                 if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " exists, but settings are not correct.");
                 if ($use_alias && $reindex_data) {
                     $name = $this->reindexToNewIndexVersion($index, $mappings, $settings, $aliases);
+                    if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::prepareIndex: new version ' . $name . ' of ' . $index . " created.");
                 } elseif ($use_alias) {
                     $name = $this->createNewIndexVersion($index, $mappings, $settings);
                     // if we don't reindex existing data, we don't set the aliases for the newly created index
@@ -222,7 +225,7 @@ class IndexHelper
                 }
             } else {
                 // if real settings are empty, the diff is just the specified settings
-                if (!empty($settings[$key])) $r['+'][$key] = $settings[$key];
+                if (!empty($settings[$key])) $r['-'][$key] = $settings[$key];
             }
         }
         return $r;
