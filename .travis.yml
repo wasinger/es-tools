@@ -4,8 +4,7 @@ php:
   - 7.2
 
 env:
-  - ES_VERSION=5.6.5
-  - ES_VERSION=6.6.1
+  - ES_VERSION=6.8.5
 
 install:
   - wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-${ES_VERSION}.tar.gz

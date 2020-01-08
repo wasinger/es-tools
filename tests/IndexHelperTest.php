@@ -3,9 +3,10 @@ namespace Wa72\ESTools\tests;
 
 use Elasticsearch\Client;
 use Elasticsearch\ClientBuilder;
+use PHPUnit\Framework\TestCase;
 use Wa72\ESTools\IndexHelper;
 
-class IndexHelperTest extends \PHPUnit_Framework_TestCase
+class IndexHelperTest extends TestCase
 {
     /**
      * @var Client
@@ -22,7 +23,7 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
     private $default_settings;
 
 
-    public function setUp()
+    public function setUp(): void
     {
         $this->client = ClientBuilder::create()->build();
         // make sure test indices do not exist already
@@ -42,7 +43,7 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
         ];
 
         $this->default_mapping = [
-            "my_type" => [
+            "_doc" => [
                 "properties" => [
                     "title" => [
                         "type" => "text",
@@ -53,7 +54,7 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
         ];
     }
 
-    public function tearDown()
+    public function tearDown(): void
     {
         // delete all indices created during tests
         $this->client->indices()->delete(['index' => $this->prefix . '*']);
@@ -104,8 +105,20 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
         $this->assertEmpty($this->helper->diffMappings($index, $this->default_mapping));
         $this->assertEquals($aliases, $this->helper->getAliases($index));
 
+        // index some data
+        $this->client->index(['index' => $index, 'type' => '_doc', 'body' => [
+            'title' => 'First Document',
+            'another_field' => 'more content'
+        ]]);
+
+        $new_index = $this->helper->prepareIndex($index, $mapping, $this->default_settings, $aliases, [
+            'use_alias' => true,
+            'reindex_data' => true
+        ]);
+        $this->assertEquals($index, $new_index); // The index should not have changed
+
         // change mapping and create a new index version
-        $mapping['my_type']['properties']['keywords'] = ['type' => 'keyword'];
+        $mapping['_doc']['properties']['keywords'] = ['type' => 'keyword'];
         $new_index = $this->helper->prepareIndex($index, $mapping, $this->default_settings, $aliases, [
             'use_alias' => true,
             'reindex_data' => true
@@ -117,10 +130,14 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
         $this->assertEquals($new_index, $this->helper->getCurrentIndexVersionName($index));
         $this->assertEmpty($this->helper->diffIndexSettings($index, $this->default_settings));
         $this->assertEmpty($this->helper->diffMappings($index, $mapping));
-        $this->assertArraySubset($aliases, $this->helper->getAliases($new_index));
+        #$this->assertArraySubset($aliases, $this->helper->getAliases($new_index)); # deprecated in phpunit 8
+        $current_aliases = $this->helper->getAliases($new_index);
+        foreach($aliases as $alias) {
+            $this->assertContains($alias, $current_aliases);
+        }
 
         // change mapping again and create a new index version
-        $mapping['my_type']['properties']['more_keywords'] = ['type' => 'keyword'];
+        $mapping['_doc']['properties']['more_keywords'] = ['type' => 'keyword'];
         $new_index1 = $this->helper->prepareIndex($index, $mapping, $this->default_settings, $aliases, [
             'use_alias' => true,
             'reindex_data' => true
@@ -132,7 +149,11 @@ class IndexHelperTest extends \PHPUnit_Framework_TestCase
         $this->assertEquals($new_index1, $this->helper->getCurrentIndexVersionName($index));
         $this->assertEmpty($this->helper->diffIndexSettings($new_index1, $this->default_settings));
         $this->assertEmpty($this->helper->diffMappings($new_index1, $mapping));
-        $this->assertArraySubset($aliases, $this->helper->getAliases($new_index1));
+        #$this->assertArraySubset($aliases, $this->helper->getAliases($new_index1)); # deprecated in phpunit 8
+        $current_aliases = $this->helper->getAliases($new_index1);
+        foreach($aliases as $alias) {
+            $this->assertContains($alias, $current_aliases);
+        }
         // the old index version should not have aliases any more
         $this->assertEmpty($this->helper->getAliases($new_index));
     }
