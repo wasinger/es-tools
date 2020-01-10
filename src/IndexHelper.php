@@ -543,6 +543,7 @@ class IndexHelper
         $counter = 0;
         foreach ($scrollhelper->scrollSearch($index, $scroll_options) as $hit) {
             $id = $hit['_id'];
+            if ($this->logger) $this->logger->debug(sprintf('Wa72\ESTools\IndexHelper::cleanup(): check document id: %s', $id));
             $type = $hit['_type'];
             $current_index = $hit['_index'];
             if (!call_user_func_array($voter, [&$hit])) {
