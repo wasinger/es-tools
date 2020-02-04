@@ -71,7 +71,7 @@ class IndexHelperTest extends TestCase
         $this->assertEmpty($this->helper->diffMappings($index, $this->default_mapping));
 
         $new_index = $this->helper->createNewIndexVersion($index, $this->default_mapping, $this->default_settings);
-        $this->assertEquals($index . '-0', $new_index);
+        $this->assertEquals($index . '-1', $new_index);
         $this->assertTrue($this->client->indices()->exists(['index' => $new_index]));
 
         $this->assertTrue($this->helper->isRealIndex($index));
@@ -123,7 +123,7 @@ class IndexHelperTest extends TestCase
             'use_alias' => true,
             'reindex_data' => true
         ]);
-        $this->assertEquals($index . '-0', $new_index);
+        $this->assertEquals($index . '-1', $new_index);
         $this->assertTrue($this->client->indices()->exists(['index' => $index]));
         $this->assertTrue($this->helper->isAlias($index));
         $this->assertFalse($this->helper->isRealIndex($index));
@@ -142,7 +142,7 @@ class IndexHelperTest extends TestCase
             'use_alias' => true,
             'reindex_data' => true
         ]);
-        $this->assertEquals($index . '-1', $new_index1);
+        $this->assertEquals($index . '-2', $new_index1);
         $this->assertTrue($this->client->indices()->exists(['index' => $index]));
         $this->assertTrue($this->helper->isAlias($index));
         $this->assertFalse($this->helper->isRealIndex($index));
@@ -167,7 +167,7 @@ class IndexHelperTest extends TestCase
 
         $this->helper->createIndex($index, $this->default_mapping, $this->default_settings);
         $new_index = $this->helper->createNewIndexVersion($index, $this->default_mapping, $this->default_settings);
-        $this->assertEquals($index . '-0', $new_index);
+        $this->assertEquals($index . '-1', $new_index);
         $this->assertTrue($this->client->indices()->exists(['index' => $new_index]));
 
         // alias $index for $new_index not set yet
