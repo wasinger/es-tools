@@ -23,10 +23,21 @@ class IndexHelper
      * @var array
      */
     private $options = [
-        'increment_separator' => '-',
         'bulk_size' => 100,
-
     ];
+
+    /**
+     * A function that returns a new name for a new index version.
+     *
+     * Must accept two arguments: The index basename (alias) and real index name
+     * of the current index version.
+     *
+     * Example:
+     * function('myindex', 'myindex-3') is expected to return 'myindex-4'
+     *
+     * @var callable
+     */
+    private $index_version_name_incrementor;
 
     /**
      * @param \Elasticsearch\Client $client
@@ -56,6 +67,8 @@ class IndexHelper
      * @param array $options [
      *      bool $use_alias Whether to use aliases
      *      bool $reindex_data Whether to reindex data from an existing index to a newly created index
+     *      bool $delete_old Whether to delete the old index version if a new one is created
+     *              (only if $use_alias and $reindex_data are also set to true)
      *  ]
      *
      * @return string|boolean The real name of the index, or false if an error occured
@@ -64,6 +77,7 @@ class IndexHelper
     {
         $use_alias = isset($options['use_alias']) ? $options['use_alias'] : false;
         $reindex_data = isset($options['reindex_data']) ? $options['reindex_data'] : false;
+        $delete_old = isset($options['delete_old']) ? $options['delete_old'] : false;
 
         if (isset($mappings['mappings'])) $mappings = $mappings['mappings'];
         if (isset($settings['settings'])) $settings = $settings['settings'];
@@ -309,13 +323,18 @@ class IndexHelper
      * @param array $mappings
      * @param array $settings
      * @param array $aliases Additional aliases to be set on the new index version
+     * @param bool $delete_old Whether to delete the old index version
      * @return string The name of the new index version
      */
-    public function reindexToNewIndexVersion($index, $mappings = [], $settings = [], $aliases = [])
+    public function reindexToNewIndexVersion($index, $mappings = [], $settings = [], $aliases = [], $delete_old = false)
     {
+        $current = $this->getCurrentIndexVersionName($index);
         $new_index = $this->createNewIndexVersion($index, $mappings, $settings);
         $this->reindex($index, $new_index);
         $this->switchAlias($index, $new_index, $aliases);
+        if ($delete_old) {
+            $this->client->delete(['index' => $current]);
+        }
         return $new_index;
     }
 
@@ -438,19 +457,35 @@ class IndexHelper
     /**
      * Get index name suffixed by incremented number
      *
-     * @param string $index The base name of the index
+     * @param string $index The base name (alias) of the index
      * @return string The incremented index name
      */
     public function getNextIndexVersionName($index)
     {
-        $basename = $index;
-        $i = 0;
-        $index = $basename . $this->options['increment_separator'] . $i;
-        while ($this->client->indices()->exists(['index' => $index])) {
-            $i++;
-            $index = $basename . $this->options['increment_separator'] . $i;
+        $current = $this->getCurrentIndexVersionName($index);
+        do {
+            $new_index = $this->generateIncrementedIndexVersionName($index, $current);
+        } while ($this->client->indices()->exists(['index' => $new_index]));
+        return $new_index;
+    }
+
+    public function generateIncrementedIndexVersionName($indexBasename, $currentIndexVersionName) {
+        if (\is_callable($this->index_version_name_incrementor)) {
+            // call custom naming function
+            return \call_user_func($this->index_version_name_incrementor, $indexBasename, $currentIndexVersionName);
+        } else {
+            // default naming function
+            $i = 0;
+            $separator = '-';
+            if ($currentIndexVersionName && $indexBasename != $currentIndexVersionName) {
+                $sep_pos = strrpos($currentIndexVersionName, $separator);
+                $i = \intval(substr($currentIndexVersionName, $sep_pos + strlen($separator)));
+                if ($currentIndexVersionName != $indexBasename . $separator . $i) {
+                    throw new \Exception('Current real index name does not match naming scheme of version name incrementor function');
+                }
+            }
+            return $indexBasename . $separator . ++$i;
         }
-        return $index;
     }
 
     /**

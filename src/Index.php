@@ -80,6 +80,10 @@ class Index
         }
         return $a;
     }
+    public function getRealIndexName()
+    {
+        return $this->indexhelper->getCurrentIndexVersionName($this->index_name);
+    }
 
     public function checkAliases()
     {
@@ -105,7 +109,8 @@ class Index
             $this->aliases,
             [
                 'use_alias' => $use_alias,
-                'reindex_data' => $reindex_data
+                'reindex_data' => $reindex_data,
+                'delete_old' => true
             ]
         );
         return $index;
