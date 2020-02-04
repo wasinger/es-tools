@@ -465,6 +465,8 @@ class IndexHelper
         $current = $this->getCurrentIndexVersionName($index);
         do {
             $new_index = $this->generateIncrementedIndexVersionName($index, $current);
+            if ($this->logger) $this->logger->debug('Trying new index name: ' . $new_index);
+            $current = $new_index;
         } while ($this->client->indices()->exists(['index' => $new_index]));
         return $new_index;
     }

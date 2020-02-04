@@ -85,6 +85,16 @@ class Index
         return $this->indexhelper->getCurrentIndexVersionName($this->index_name);
     }
 
+    /**
+     * Switch alias to a another index version
+     *
+     * This index version must already exist, e.g. created by $this->prepare(true, false)
+     */
+    public function switchIndexVersion($realIndexVersionName)
+    {
+        return $this->indexhelper->switchAlias($this->index_name, $realIndexVersionName, $this->aliases);
+    }
+
     public function checkAliases()
     {
         $current_index = $this->indexhelper->getCurrentIndexVersionName($this->index_name);
