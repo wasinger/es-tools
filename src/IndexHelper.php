@@ -506,7 +506,6 @@ class IndexHelper
                 $alias_actions[] = ['add' => ['index' => $index, 'alias' => $alias]];
             }
             $r = $this->client->indices()->updateAliases([
-                'index' => $index,
                 'body' => [
                     'actions' => $alias_actions
                 ]
