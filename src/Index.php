@@ -234,6 +234,105 @@ class Index
     }
 
     /**
+     * Get a document by ID
+     *
+     * @param mixed $id
+     * @return mixed|null
+     */
+    public function get($id): ?array
+    {
+        $index = $this->indexhelper->getCurrentIndexVersionName($this->index_name);
+        $params = [
+            'index' => $index,
+            'type' => $this->type,
+            'id' => $id
+        ];
+        try {
+            $r = $this->es->get($params);
+            return $r['_source'];
+        } catch (\Exception $e) {
+            // Document not found
+            return null;
+        }
+    }
+
+    /**
+     * Get multiple documents by their IDs
+     *
+     * @param array $ids
+     * @return array
+     */
+    public function mget(array $ids): array
+    {
+        $index = $this->indexhelper->getCurrentIndexVersionName($this->index_name);
+        $params = [
+            'index' => $index,
+            'type' => $this->type,
+            'body' => [
+                'ids' => $ids
+            ]
+        ];
+        try {
+            $r = $this->es->mget($params);
+            return array_map(function ($doc) {
+                return $doc['_source'];
+            }, $r['docs']);
+        } catch (\Exception $e) {
+            // Document not found
+            return [];
+        }
+    }
+
+    /**
+     * Search for documents in the index
+     *
+     * @param array $query The query definition, e.g. ['query' => ['match' => ['field' => 'value']]]. Must begin with 'query' key.
+     * @param array $options Additional options 'size', 'from', 'sort'
+     * @return array The search results
+     */
+    public function search(array $query, array $options = []): array
+    {
+        $index = $this->indexhelper->getCurrentIndexVersionName($this->index_name);
+        $params = [
+            'index' => $index,
+            'type' => $this->type,
+            'body' => $query
+        ];
+        if (isset($options['size'])) {
+            $params['body']['size'] = $options['size'];
+        }
+        if (isset($options['from'])) {
+            $params['body']['from'] = $options['from'];
+        }
+        if (isset($options['sort'])) {
+            $params['body']['sort'] = $options['sort'];
+        }
+        return $this->es->search($params);
+    }
+
+    public function findOneBy($field, $value)
+    {
+        $index = $this->indexhelper->getCurrentIndexVersionName($this->index_name);
+        $params = [
+            'index' => $index,
+            'type' => $this->type,
+            'body' => [
+                'query' => [
+                    'term' => [
+                        $field => $value
+                    ]
+                ],
+                'size' => 1
+            ]
+        ];
+        $result = $this->es->search($params);
+        if (isset($result['hits']['hits']) && count($result['hits']['hits']) > 0) {
+            return $result['hits']['hits'][0]['_source'];
+        }
+        return null;
+    }
+
+    /**
      * @param iterable $data
      * @return array Array of IDs of indexed documents
      */
