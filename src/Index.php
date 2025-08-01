@@ -340,6 +340,32 @@ class Index
         return $this->indexhelper->bulkIndex($this->index_name, $data);
     }
 
+    public function deleteIndex(): bool
+    {
+        $params = ['index' => $this->getRealIndexName()];
+        $response = $this->es->indices()->delete($params);
+        if (!empty($response['acknowledged'])) {
+            $this->log(LogLevel::DEBUG, sprintf('Index %s successfully deleted.', $this->getRealIndexName()));
+            return true;
+        } else {
+            if (!empty($response['error'])) {
+                $this->log(LogLevel::ERROR, sprintf('Error deleting index %s: %s', $this->getRealIndexName(), $response['error']['reason']));
+            }
+            $this->log(LogLevel::ERROR, sprintf('Index %s could not be deleted.', $this->getRealIndexName()));
+            return false;
+        }
+    }
+
+    public function count(): int|false
+    {
+        $index = $this->indexhelper->getCurrentIndexVersionName($this->index_name);
+        $res = $this->es->count(['index' => $index]);
+        if (isset($res['count'])) {
+            return $res['count'];
+        }
+        return false;
+    }
+
     /**
      * @param LoggerInterface $logger
      */
@@ -349,12 +375,18 @@ class Index
         $this->indexhelper->setLogger($logger);
     }
 
+    public function getElasticsearchClient(): Client
+    {
+        return $this->es;
+    }
+
     private function log($level, $message)
     {
         if ($this->logger instanceof LoggerInterface) {
             $this->logger->log($level, $message);
         }
     }
+
 
 
 }
