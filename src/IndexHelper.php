@@ -71,9 +71,9 @@ class IndexHelper
      *              (only if $use_alias and $reindex_data are also set to true)
      *  ]
      *
-     * @return string|boolean The real name of the index, or false if an error occured
+     * @return string|false The real name of the index, or false if an error occured
      */
-    public function prepareIndex($index, $mappings = [], $settings = [], $aliases = [], $options = [])
+    public function prepareIndex($index, $mappings = [], $settings = [], $aliases = [], $options = []): string|false
     {
         $use_alias = isset($options['use_alias']) ? $options['use_alias'] : false;
         $reindex_data = isset($options['reindex_data']) ? $options['reindex_data'] : false;
@@ -127,7 +127,7 @@ class IndexHelper
         return $name;
     }
 
-    public function exists($index)
+    public function exists($index): bool
     {
         return $this->client->indices()->exists(['index' => $index]);
     }
@@ -430,9 +430,9 @@ class IndexHelper
      * Get the real versioned index name for which an index name is an alias
      *
      * @param string $index The basename of an index that is an alias for an index version
-     * @return string|boolean The index version name (the real index to which $index points)
+     * @return string|false The index version name (the real index to which $index points)
      */
-    public function getCurrentIndexVersionName($index)
+    public function getCurrentIndexVersionName($index): string|false
     {
         try {
             $aliases = $this->client->indices()->getAlias(['name' => $index]);
@@ -598,13 +598,9 @@ class IndexHelper
 
     /**
      * Create an index
-     *
-     * @param string $index The name of the index to be created
-     * @param array $mappings
-     * @param array $settings
-     * @param array $aliases
+     * @return string|false The index name of the index created, or false on error
      */
-    public function createIndex($index, $mappings = [], $settings = [], $aliases = [])
+    public function createIndex(string $name, array $mappings = [], array $settings = [], array $aliases = []): string|false
     {
         $body = [];
         // normalize mappings and settings array
@@ -617,24 +613,28 @@ class IndexHelper
             $body['mappings'] = $mappings;
         }
         $params = [
-            'index' => $index
+            'index' => $name
         ];
         if (!empty($body)) {
             $params['body'] = $body;
         }
         $result = $this->client->indices()->create($params);
-
         if (!empty($aliases)) {
             $alias_actions = [];
             foreach ($aliases as $alias) {
-                $alias_actions[] = ['add' => ['index' => $index, 'alias' => $alias]];
+                $alias_actions[] = ['add' => ['index' => $name, 'alias' => $alias]];
             }
             $this->client->indices()->updateAliases([
-                'index' => $index,
+                'index' => $name,
                 'body' => [
                     'actions' => $alias_actions
                 ]
             ]);
+        }
+        if (!empty($result['acknowledged']) && !empty($result['index'])) {
+            return $result['index'];
+        } else {
+            return false;
         }
     }
 }

@@ -3,6 +3,7 @@ namespace Wa72\ESTools\tests;
 
 use Elasticsearch\Client;
 use Elasticsearch\ClientBuilder;
+use Elasticsearch\Common\Exceptions\ElasticsearchException;
 use PHPUnit\Framework\TestCase;
 use Wa72\ESTools\IndexHelper;
 
@@ -27,7 +28,14 @@ class IndexHelperTest extends TestCase
     {
         $this->client = ClientBuilder::create()->build();
         // make sure test indices do not exist already
-        $this->client->indices()->delete(['index' => $this->prefix . '*']);
+        try {
+            $this->client->indices()->delete(['index' => $this->prefix . '*']);
+        } catch (\Exception $e) {
+        }
+        $this->client->cluster()->health([
+            'wait_for_status' => 'yellow',
+            'timeout' => '10s'
+        ]);
         $this->helper = new IndexHelper($this->client);
         $this->default_settings = [
             "analysis" => [
@@ -57,22 +65,27 @@ class IndexHelperTest extends TestCase
     public function tearDown(): void
     {
         // delete all indices created during tests
-        $this->client->indices()->delete(['index' => $this->prefix . '*']);
+        try {
+            $this->client->indices()->delete(['index' => $this->prefix . '*']);
+        } catch (\Exception $e) {
+        }
     }
 
     public function testCreateIndex()
     {
         $index = $this->prefix . 'firstindex';
-        $this->helper->createIndex($index, $this->default_mapping, $this->default_settings);
-
-        $this->assertTrue($this->client->indices()->exists(['index' => $index]));
+        $created_index = $this->helper->createIndex($index, $this->default_mapping, $this->default_settings);
+        $this->assertEquals($index, $created_index, sprintf('Expected index name: %s, got %s', $index, $created_index));
+        $this->waitForIndex($created_index);
+        $this->assertTrue($this->client->indices()->exists(['index' => $index]), sprintf('Index %s does not exist', $index));
 
         $this->assertEmpty($this->helper->diffIndexSettings($index, $this->default_settings));
         $this->assertEmpty($this->helper->diffMappings($index, $this->default_mapping));
 
         $new_index = $this->helper->createNewIndexVersion($index, $this->default_mapping, $this->default_settings);
-        $this->assertEquals($index . '-1', $new_index);
-        $this->assertTrue($this->client->indices()->exists(['index' => $new_index]));
+        $this->assertEquals($index . '-1', $new_index, sprintf('Expected index name: %s, got: %s', $index . '-1', $new_index));
+        $this->waitForIndex($new_index);
+        $this->assertTrue($this->client->indices()->exists(['index' => $new_index]), sprintf('Index %s does not exist', $new_index));
 
         $this->assertTrue($this->helper->isRealIndex($index));
 //        $this->client->indices()->delete(['index' => $index]);
@@ -98,38 +111,41 @@ class IndexHelperTest extends TestCase
         $new_index = $this->helper->prepareIndex($index, $mapping, $this->default_settings, $aliases, [
             'use_alias' => false
         ]);
-        $this->assertTrue($this->client->indices()->exists(['index' => $index]));
+        $this->waitForIndex($new_index);
+        $this->assertTrue($this->client->indices()->exists(['index' => $index]), sprintf('Index %s does not exist', $index));
         $this->assertFalse($this->helper->isAlias($index));
-        $this->assertEquals($index, $new_index);
+        $this->assertEquals($index, $new_index, sprintf('Expected index name: %s, got %s', $index, $new_index));
         $this->assertEmpty($this->helper->diffIndexSettings($index, $this->default_settings));
         $this->assertEmpty($this->helper->diffMappings($index, $this->default_mapping));
         $this->assertEquals($aliases, $this->helper->getAliases($index));
 
         // index some data
         $this->client->index(['index' => $index, 'type' => '_doc', 'body' => [
-            'title' => 'First Document',
-            'another_field' => 'more content'
+            'title' => 'First Document'
         ]]);
 
         $new_index = $this->helper->prepareIndex($index, $mapping, $this->default_settings, $aliases, [
             'use_alias' => true,
             'reindex_data' => true
         ]);
-        $this->assertEquals($index, $new_index); // The index should not have changed
-
+        $this->assertEquals($index, $new_index, sprintf('Expected index name: %s, got %s', $index, $new_index)); // The index should not have changed
+        $this->waitForIndex($new_index);
         // change mapping and create a new index version
         $mapping['_doc']['properties']['keywords'] = ['type' => 'keyword'];
         $new_index = $this->helper->prepareIndex($index, $mapping, $this->default_settings, $aliases, [
             'use_alias' => true,
             'reindex_data' => true
         ]);
-        $this->assertEquals($index . '-1', $new_index);
-        $this->assertTrue($this->client->indices()->exists(['index' => $index]));
+        $this->assertEquals($index . '-1', $new_index, sprintf('Expected index name: %s, got %s', $index . '-1', $new_index));
+        $this->waitForIndex($new_index);
+        $this->assertTrue($this->client->indices()->exists(['index' => $index]), sprintf('Index %s does not exist', $index));
         $this->assertTrue($this->helper->isAlias($index));
         $this->assertFalse($this->helper->isRealIndex($index));
         $this->assertEquals($new_index, $this->helper->getCurrentIndexVersionName($index));
-        $this->assertEmpty($this->helper->diffIndexSettings($index, $this->default_settings));
-        $this->assertEmpty($this->helper->diffMappings($index, $mapping));
+        $diff_settings = $this->helper->diffIndexSettings($index, $this->default_settings);
+        $this->assertEmpty($diff_settings, 'Settings differ: ' . json_encode($diff_settings));
+        $diff_mappings = $this->helper->diffMappings($index, $mapping);
+        $this->assertEmpty($diff_mappings, 'Mappings differ: ' . json_encode($diff_mappings));
         #$this->assertArraySubset($aliases, $this->helper->getAliases($new_index)); # deprecated in phpunit 8
         $current_aliases = $this->helper->getAliases($new_index);
         foreach($aliases as $alias) {
@@ -142,7 +158,8 @@ class IndexHelperTest extends TestCase
             'use_alias' => true,
             'reindex_data' => true
         ]);
-        $this->assertEquals($index . '-2', $new_index1);
+        $this->assertEquals($index . '-2', $new_index1, sprintf('Expected index name: %s, got %s', $index . '-2', $new_index1));
+        $this->waitForIndex($new_index1);
         $this->assertTrue($this->client->indices()->exists(['index' => $index]));
         $this->assertTrue($this->helper->isAlias($index));
         $this->assertFalse($this->helper->isRealIndex($index));
@@ -154,7 +171,7 @@ class IndexHelperTest extends TestCase
         foreach($aliases as $alias) {
             $this->assertContains($alias, $current_aliases);
         }
-        // the old index version should not have aliases any more
+        // the old index version should not have aliases anymore
         $this->assertEmpty($this->helper->getAliases($new_index));
     }
 
@@ -163,11 +180,15 @@ class IndexHelperTest extends TestCase
         $index = $this->prefix . 'thirdindex';
 
         // $index does not exist
-        $this->assertEquals(false, $this->helper->getCurrentIndexVersionName($index));
+        $currentVersionName = $this->helper->getCurrentIndexVersionName($index);
+        $this->assertEquals(false, $currentVersionName, sprintf('Index %s must not exist', $currentVersionName));
 
-        $this->helper->createIndex($index, $this->default_mapping, $this->default_settings);
+        $created_index = $this->helper->createIndex($index, $this->default_mapping, $this->default_settings);
+        $this->assertEquals($index, $created_index, sprintf('Expected index name: %s, got %s', $index, $created_index));
+        $this->waitForIndex($created_index);
         $new_index = $this->helper->createNewIndexVersion($index, $this->default_mapping, $this->default_settings);
-        $this->assertEquals($index . '-1', $new_index);
+        $this->assertEquals($index . '-1', $new_index, sprintf('Expected index name: %s, got %s', $index . '-1', $new_index));
+        $this->waitForIndex($new_index);
         $this->assertTrue($this->client->indices()->exists(['index' => $new_index]));
 
         // alias $index for $new_index not set yet
@@ -213,5 +234,26 @@ class IndexHelperTest extends TestCase
         ];
 
         $this->assertEquals($normalized, $this->helper->normalizeIndexSettings($settings));
+    }
+    private function waitForIndex($indexName)
+    {
+        $maxWaitSeconds = 10;
+        $startTime = time();
+
+        while (time() - $startTime < $maxWaitSeconds) {
+            try {
+                if ($this->client->indices()->exists(['index' => $indexName])) {
+                    $stats = $this->client->indices()->stats(['index' => $indexName]);
+                    if (isset($stats['indices'][$indexName])) {
+                        return true;
+                    }
+                }
+            } catch (\Exception $e) {
+                // Index noch nicht bereit, weiter warten
+            }
+
+            usleep(200000); // 200ms warten
+        }
+        throw new \Exception("Index '$indexName' was not ready after $maxWaitSeconds seconds");
     }
 }
