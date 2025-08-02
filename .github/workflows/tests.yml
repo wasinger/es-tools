@@ -1,0 +1,75 @@
+name: Tests
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        php-version: [8.0, 8.3, 8.4]
+        es-version: [6.8.5]
+    
+    env:
+      ES_VERSION: ${{ matrix.es-version }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: '8'
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ matrix.php-version }}
+        extensions: mbstring, xml, ctype, iconv, intl, pdo_sqlite
+        coverage: none
+        
+    - name: Get Composer cache directory
+      id: composer-cache
+      run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+    - name: Cache Composer packages
+      uses: actions/cache@v3
+      with:
+        path: ${{ steps.composer-cache.outputs.dir }}
+        key: ${{ runner.os }}-php-${{ matrix.php-version }}-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-php-${{ matrix.php-version }}-
+          
+    - name: Install Composer dependencies
+      run: composer install --prefer-dist --no-progress --no-suggest
+      
+    - name: Download and start Elasticsearch
+      run: |
+        wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-${ES_VERSION}.tar.gz
+        tar -xzf elasticsearch-${ES_VERSION}.tar.gz
+        # Konfiguration für Tests optimieren
+        echo "cluster.name: test-cluster" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
+        echo "discovery.type: single-node" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
+        echo "index.refresh_interval: 1s" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
+        # echo "index.number_of_replicas: 0" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
+        ./elasticsearch-${ES_VERSION}/bin/elasticsearch -d
+
+    - name: Install Elasticsearch PHP client
+      run: composer require elasticsearch/elasticsearch:^${ES_VERSION:0:1} --no-interaction --prefer-dist
+
+    - name: Wait for Elasticsearch
+      run: |
+        echo "Waiting for Elasticsearch to start..."
+        timeout 60 bash -c 'until curl -s http://localhost:9200 > /dev/null; do sleep 2; done'
+        echo "Elasticsearch is ready!"
+        
+    - name: Run tests
+      run: vendor/bin/phpunit
+
