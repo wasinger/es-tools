@@ -17,16 +17,21 @@ jobs:
     
     env:
       ES_VERSION: ${{ matrix.es-version }}
+
+    services:
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:${{ matrix.es-version }}
+        options: --health-cmd="curl http://localhost:9200/_cluster/health" -e "discovery.type=single-node" -e "xpack.security.enabled=false"
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Setup Java
-      uses: actions/setup-java@v3
-      with:
-        distribution: 'temurin'
-        java-version: '8'
+#    - name: Setup Java
+#      uses: actions/setup-java@v3
+#      with:
+#        distribution: 'temurin'
+#        java-version: '8'
 
     - name: Setup PHP
       uses: shivammathur/setup-php@v2
@@ -50,14 +55,26 @@ jobs:
     - name: Install Composer dependencies
       run: composer install --prefer-dist --no-progress --no-suggest
       
-    - name: Download and start Elasticsearch
-      run: |
-        wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-${ES_VERSION}.tar.gz
-        tar -xzf elasticsearch-${ES_VERSION}.tar.gz
-        echo "discovery.type: single-node" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
-        echo "xpack.security.enabled: false" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
-        echo "index.refresh_interval: 1s" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
-        ES_JAVA_OPTS="-Xms512m -Xmx512m" ./elasticsearch-${ES_VERSION}/bin/elasticsearch -d
+#    - name: Download and start Elasticsearch
+#      run: |
+#        wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-${ES_VERSION}.tar.gz
+#        tar -xzf elasticsearch-${ES_VERSION}.tar.gz
+#        echo "discovery.type: single-node" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
+#        echo "xpack.security.enabled: false" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
+#        echo "index.refresh_interval: 1s" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
+#        echo "network.host: 0.0.0.0" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
+#        # Non-root Benutzer erstellen und Berechtigungen setzen
+#        sudo useradd -m elasticsearch
+#        sudo chown -R elasticsearch:elasticsearch elasticsearch-${ES_VERSION}/
+#        # Elasticsearch als non-root Benutzer starten
+#        echo "Starting Elasticsearch as elasticsearch user..."
+#        sudo -u elasticsearch ES_JAVA_OPTS="-Xms512m -Xmx512m" nohup ./elasticsearch-${ES_VERSION}/bin/elasticsearch > elasticsearch.log 2>&1 &
+#        echo "Elasticsearch started, waiting for startup..."
+#        sleep 10
+#        # Status prüfen
+#        ps aux | grep elasticsearch | grep -v grep || echo "No Elasticsearch process found"
+#        echo "=== Elasticsearch startup log ==="
+#        tail -20 elasticsearch.log
 
     - name: Install Elasticsearch PHP client
       run: composer require elasticsearch/elasticsearch:^${ES_VERSION:0:1} --no-interaction --prefer-dist
@@ -72,7 +89,7 @@ jobs:
         echo "Elasticsearch is ready!"
         # Zusätzlich den Cluster-Status prüfen
         curl -s http://localhost:9200/_cluster/health
-        
+
     - name: Run tests
       run: vendor/bin/phpunit
 

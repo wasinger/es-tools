@@ -237,7 +237,7 @@ class IndexHelperTest extends TestCase
     }
     private function waitForIndex($indexName)
     {
-        $maxWaitSeconds = 10;
+        $maxWaitSeconds = 20;
         $startTime = time();
 
         while (time() - $startTime < $maxWaitSeconds) {
@@ -251,8 +251,7 @@ class IndexHelperTest extends TestCase
             } catch (\Exception $e) {
                 // Index noch nicht bereit, weiter warten
             }
-
-            usleep(200000); // 200ms warten
+            sleep(1);
         }
         throw new \Exception("Index '$indexName' was not ready after $maxWaitSeconds seconds");
     }
