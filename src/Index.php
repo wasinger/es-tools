@@ -324,8 +324,8 @@ class Index
             ]
         ];
         $result = $this->es->search($params);
-        if (isset($result['hits']['hits']) && count($result['hits']['hits']) > 0) {
-            return $result['hits']['hits'][0]['_source'];
+        if (!empty($result['hits']['hits'])) {
+            return $result['hits']['hits'][0];
         }
         return null;
     }
