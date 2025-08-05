@@ -249,7 +249,7 @@ class Index
         ];
         try {
             $r = $this->es->get($params);
-            return $r['_source'];
+            return $r;
         } catch (\Exception $e) {
             // Document not found
             return null;
@@ -274,9 +274,7 @@ class Index
         ];
         try {
             $r = $this->es->mget($params);
-            return array_map(function ($doc) {
-                return $doc['_source'];
-            }, $r['docs']);
+            return $r['docs'];
         } catch (\Exception $e) {
             // Document not found
             return [];
