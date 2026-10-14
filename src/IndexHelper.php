@@ -108,7 +108,7 @@ class IndexHelper
             if (!empty($dm['-']) || $ds) {
                 if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " exists, but settings are not correct.");
                 if ($use_alias && $reindex_data) {
-                    $name = $this->reindexToNewIndexVersion($index, $mappings, $settings, $aliases);
+                    $name = $this->reindexToNewIndexVersion($index, $mappings, $settings, $aliases, $delete_old);
                     if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::prepareIndex: new version ' . $name . ' of ' . $index . " created.");
                 } elseif ($use_alias) {
                     $name = $this->createNewIndexVersion($index, $mappings, $settings);
@@ -332,8 +332,10 @@ class IndexHelper
         $new_index = $this->createNewIndexVersion($index, $mappings, $settings);
         $this->reindex($index, $new_index);
         $this->switchAlias($index, $new_index, $aliases);
-        if ($delete_old) {
-            $this->client->delete(['index' => $current]);
+        // If $index was a real index (not an alias) it has already been removed by switchAlias()
+        if ($delete_old && $current && $current !== $index && $current !== $new_index) {
+            $this->client->indices()->delete(['index' => $current]);
+            if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::reindexToNewIndexVersion: old index version ' . $current . ' deleted.');
         }
         return $new_index;
     }
@@ -355,7 +357,10 @@ class IndexHelper
     public function indexToNewIndexVersion($documents, $index, $mappings = [], $settings = [], $aliases = [])
     {
         $new_index = $this->createNewIndexVersion($index, $mappings, $settings);
-        $this->bulkIndex($index, $documents);
+        // use the mapping type from the mappings array as default type for the documents
+        $m = isset($mappings['mappings']) ? $mappings['mappings'] : $mappings;
+        $type = (is_array($m) && count($m) == 1) ? array_keys($m)[0] : null;
+        $this->bulkIndex($new_index, $documents, $type);
         $this->switchAlias($index, $new_index, $aliases);
         return $new_index;
     }
@@ -378,10 +383,11 @@ class IndexHelper
         $ids = [];
 
         foreach($documents as $document) {
-            if ($this->logger) $this->logger->debug('Indexing document: ' . $document['_id']);
+            if ($this->logger) $this->logger->debug('Indexing document: ' . ($document['_id'] ?? '(no id)'));
             $count++;
             $bulk_queries['body'][] = [
-                'index' => array_filter(
+                // cast to object so that empty metadata is encoded as {} instead of []
+                'index' => (object) array_filter(
                     [
                         '_type' => isset($document['_type']) ? $document['_type'] : null,
                         '_id' => isset($document['_id']) ? $document['_id'] : null,
@@ -399,8 +405,10 @@ class IndexHelper
                 $bulk_queries['body'] = [];
             }
         }
-        $response = $this->client->bulk($bulk_queries);
-        $ids = array_merge($ids, $this->_evaluateBulkIndexResponse($response));
+        if (!empty($bulk_queries['body'])) {
+            $response = $this->client->bulk($bulk_queries);
+            $ids = array_merge($ids, $this->_evaluateBulkIndexResponse($response));
+        }
         if ($this->logger) $this->logger->info('Documents indexed: ' . count($ids));
         return $ids;
     }
@@ -548,7 +556,10 @@ class IndexHelper
      */
     public function reindex($src_index, $dest_index)
     {
+        // make sure all recently indexed documents are visible to the reindex process
+        $this->client->indices()->refresh(['index' => $src_index]);
         $res = $this->client->reIndex([
+            'refresh' => true,
             'body' => [
                 'source' => [
                     'index' => $src_index
@@ -625,7 +636,6 @@ class IndexHelper
                 $alias_actions[] = ['add' => ['index' => $name, 'alias' => $alias]];
             }
             $this->client->indices()->updateAliases([
-                'index' => $name,
                 'body' => [
                     'actions' => $alias_actions
                 ]

@@ -5,101 +5,106 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+  workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     strategy:
+      fail-fast: false
       matrix:
-        php-version: [8.0, 8.3, 8.4]
-        es-version: [6.8.5]
-    
-    env:
-      ES_VERSION: ${{ matrix.es-version }}
+        php-version: ['8.0', '8.1', '8.2', '8.3', '8.4']
+        es-version: ['6.8.23']
+        # es-port: a distinct host port for every job, so that jobs running concurrently on the same host
+        # (e.g. locally with nektos/act) do not conflict with each other or with a local Elasticsearch on port 9200
+        include:
+          - php-version: '8.0'
+            es-port: 19280
+          - php-version: '8.1'
+            es-port: 19281
+          - php-version: '8.2'
+            es-port: 19282
+          - php-version: '8.3'
+            es-port: 19283
+          - php-version: '8.4'
+            es-port: 19284
 
     services:
       elasticsearch:
         image: docker.elastic.co/elasticsearch/elasticsearch:${{ matrix.es-version }}
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: 'false'
+          ES_JAVA_OPTS: -Xms512m -Xmx512m
         ports:
-          - 9200:9200
-        options: --health-cmd="curl http://localhost:9200/_cluster/health" -e "discovery.type=single-node" -e "xpack.security.enabled=false"
-    
+          - ${{ matrix.es-port }}:9200
+        options: >-
+          --health-cmd "curl -fs http://localhost:9200/_cluster/health?wait_for_status=yellow || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
-#    - name: Setup Java
-#      uses: actions/setup-java@v3
-#      with:
-#        distribution: 'temurin'
-#        java-version: '8'
+    # Only needed when running locally with nektos/act behind an HTTP proxy:
+    # setup-php downloads files using "sudo curl", and sudo drops the proxy environment variables by default
+    - name: Keep proxy environment variables for sudo (act only)
+      if: ${{ env.ACT }}
+      run: echo 'Defaults env_keep += "http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY"' | sudo tee /etc/sudoers.d/proxy
 
     - name: Setup PHP
       uses: shivammathur/setup-php@v2
       with:
         php-version: ${{ matrix.php-version }}
-        extensions: mbstring, xml, ctype, iconv, intl, pdo_sqlite
+        extensions: mbstring, json, curl
         coverage: none
-        
+        tools: composer:v2
+
     - name: Get Composer cache directory
       id: composer-cache
       run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
 
     - name: Cache Composer packages
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ${{ steps.composer-cache.outputs.dir }}
-        key: ${{ runner.os }}-php-${{ matrix.php-version }}-${{ hashFiles('**/composer.lock') }}
+        key: ${{ runner.os }}-php-${{ matrix.php-version }}-${{ hashFiles('composer.json') }}
         restore-keys: |
           ${{ runner.os }}-php-${{ matrix.php-version }}-
-          
+
+    # composer.lock is not part of the repository, so this resolves the newest
+    # dependencies (incl. PHPUnit version) compatible with the PHP version of the matrix
     - name: Install Composer dependencies
-      run: composer install --prefer-dist --no-progress --no-suggest
+      run: composer update --prefer-dist --no-progress --no-interaction
 
-#    - name: Download and start Elasticsearch
-#      run: |
-#        wget https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-${ES_VERSION}.tar.gz
-#        tar -xzf elasticsearch-${ES_VERSION}.tar.gz
-#        echo "discovery.type: single-node" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
-#        echo "xpack.security.enabled: false" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
-#        echo "index.refresh_interval: 1s" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
-#        echo "network.host: 0.0.0.0" >> elasticsearch-${ES_VERSION}/config/elasticsearch.yml
-#        ES_JAVA_OPTS="-Xms512m -Xmx512m" ./elasticsearch-${ES_VERSION}/bin/elasticsearch -d
-#        #        # Non-root Benutzer erstellen und Berechtigungen setzen
-#        #        sudo useradd -m elasticsearch
-#        #        sudo chown -R elasticsearch:elasticsearch elasticsearch-${ES_VERSION}/
-#        #        # Elasticsearch als non-root Benutzer starten
-#        #        echo "Starting Elasticsearch as elasticsearch user..."
-#        #        sudo -u elasticsearch ES_JAVA_OPTS="-Xms512m -Xmx512m" nohup ./elasticsearch-${ES_VERSION}/bin/elasticsearch > elasticsearch.log 2>&1 &
-#        echo "Elasticsearch started"
-
-#    - name: Configure sysctl limits
-#      run: |
-#        sudo swapoff -a
-#        sudo sysctl -w vm.swappiness=1
-#        sudo sysctl -w fs.file-max=262144
-#        sudo sysctl -w vm.max_map_count=262144
-
-#    - name: Runs Elasticsearch
-#      uses: elastic/elastic-github-actions/elasticsearch@master
-#      with:
-#        stack-version: ${{ matrix.es-version }}
-#        security-enabled: false
-
-    - name: Install Elasticsearch PHP client
-      run: composer require elasticsearch/elasticsearch:^${ES_VERSION:0:1} --no-interaction --prefer-dist
-
+    # Where the service container is reachable depends on the environment:
+    # - GitHub hosted runners and nektos/act (job container in host network): on localhost via the mapped host port
+    # - job container in the same docker network as the service: via the service name
     - name: Wait for Elasticsearch
+      env:
+        MAPPED_PORT: ${{ job.services.elasticsearch.ports['9200'] }}
       run: |
-        echo "Waiting for Elasticsearch to start..."
-        timeout 120 bash -c 'until curl -s http://localhost:9200 > /dev/null; do 
-          echo "Still waiting for Elasticsearch..."
+        candidates="localhost:${{ matrix.es-port }}"
+        [ -n "$MAPPED_PORT" ] && candidates="$candidates localhost:$MAPPED_PORT"
+        candidates="$candidates elasticsearch:9200"
+        echo "Trying Elasticsearch at: $candidates"
+        for i in $(seq 1 36); do
+          for host in $candidates; do
+            if curl -fs --noproxy '*' "http://$host/_cluster/health?wait_for_status=yellow&timeout=5s" > /dev/null; then
+              echo "Elasticsearch is available at $host"
+              echo "ES_HOST=$host" >> $GITHUB_ENV
+              curl -s --noproxy '*' "http://$host"
+              exit 0
+            fi
+          done
+          echo "Still waiting for Elasticsearch ..."
           sleep 5
-        done'
-        echo "Elasticsearch is ready!"
-        curl -s http://localhost:9200/_cluster/health
+        done
+        echo "Elasticsearch did not become available"
+        exit 1
 
     - name: Run tests
       run: vendor/bin/phpunit
-

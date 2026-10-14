@@ -24,5 +24,10 @@
         "files": [
             "src/functions.php"
         ]
+    },
+    "autoload-dev":{
+        "psr-4":{
+            "Wa72\\ESTools\\tests\\":"tests/"
+        }
     }
 }

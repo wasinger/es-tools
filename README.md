@@ -21,3 +21,25 @@ managing mapping, settings, and versions, as well as indexing, querying, retriev
 
 There is also [wasinger/elasticsearch-bundle](https://github.com/wasinger/elasticsearch-bundle) 
 for integrating these tools in a Symfony project.
+
+Running tests
+-------------
+
+Most tests need a running Elasticsearch 6.x server. By default `localhost:9200` is used, 
+another host can be set with the environment variable `ES_HOST`:
+
+```bash
+docker run -d --rm --name estools-test-es -p 9210:9200 -e discovery.type=single-node docker.elastic.co/elasticsearch/elasticsearch:6.8.23
+ES_HOST=localhost:9210 vendor/bin/phpunit
+```
+
+If Elasticsearch is not available, these tests are skipped (or fail if the environment variable `CI` is set).
+
+The GitHub Actions workflow can also be run locally using [nektos/act](https://github.com/nektos/act):
+
+```bash
+act push -j test
+```
+
+When working behind an HTTP proxy, pass the proxy settings to the job containers, 
+e.g. `act push -j test --env https_proxy=$https_proxy --env http_proxy=$http_proxy --env no_proxy=localhost,127.0.0.1`.

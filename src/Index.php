@@ -1,6 +1,7 @@
 <?php
 namespace Wa72\ESTools;
 use Elasticsearch\Client;
+use Elasticsearch\Common\Exceptions\Missing404Exception;
 use Psr\Log\LoggerAwareTrait;
 use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
@@ -190,7 +191,12 @@ class Index
             'id' => $id
         ];
 
-        $r = $this->es->delete($params);
+        try {
+            $r = $this->es->delete($params);
+        } catch (Missing404Exception $e) {
+            // the client throws an exception if the document does not exist
+            $r = ['result' => 'not_found'];
+        }
 
 //        // Example responses:
 //        1. Successfully deleted:
@@ -335,7 +341,7 @@ class Index
      * @return array Array of IDs of indexed documents
      */
     public function bulkIndex(iterable $data) {
-        return $this->indexhelper->bulkIndex($this->index_name, $data);
+        return $this->indexhelper->bulkIndex($this->index_name, $data, $this->type);
     }
 
     public function deleteIndex(): bool
