@@ -22,7 +22,7 @@ class IndexHelperTest extends ElasticsearchTestCase
         $created_index = $this->helper->createIndex($index, $this->default_mapping, $this->default_settings);
         $this->assertEquals($index, $created_index, sprintf('Expected index name: %s, got %s', $index, $created_index));
         $this->waitForIndex($created_index);
-        $this->assertTrue($this->client->indices()->exists(['index' => $index]), sprintf('Index %s does not exist', $index));
+        $this->assertTrue((new \Wa72\ESTools\Internal\ClientAdapter($this->client))->indices('exists', ['index' => $index]), sprintf('Index %s does not exist', $index));
 
         $this->assertEmpty($this->helper->diffIndexSettings($index, $this->default_settings));
         $this->assertEmpty($this->helper->diffMappings($index, $this->default_mapping));
@@ -30,7 +30,7 @@ class IndexHelperTest extends ElasticsearchTestCase
         $new_index = $this->helper->createNewIndexVersion($index, $this->default_mapping, $this->default_settings);
         $this->assertEquals($index . '-1', $new_index, sprintf('Expected index name: %s, got: %s', $index . '-1', $new_index));
         $this->waitForIndex($new_index);
-        $this->assertTrue($this->client->indices()->exists(['index' => $new_index]), sprintf('Index %s does not exist', $new_index));
+        $this->assertTrue((new \Wa72\ESTools\Internal\ClientAdapter($this->client))->indices('exists', ['index' => $new_index]), sprintf('Index %s does not exist', $new_index));
 
         $this->assertTrue($this->helper->isRealIndex($index));
 //        $this->client->indices()->delete(['index' => $index]);
@@ -40,7 +40,7 @@ class IndexHelperTest extends ElasticsearchTestCase
         $this->assertFalse($this->helper->isRealIndex($index));
         $this->assertTrue($this->helper->isAlias($index));
 
-        $this->assertTrue($this->client->indices()->exists(['index' => $index]));
+        $this->assertTrue((new \Wa72\ESTools\Internal\ClientAdapter($this->client))->indices('exists', ['index' => $index]));
 
         $this->assertEmpty($this->helper->diffIndexSettings($index, $this->default_settings));
         $this->assertEmpty($this->helper->diffMappings($index, $this->default_mapping));
@@ -57,7 +57,7 @@ class IndexHelperTest extends ElasticsearchTestCase
             'use_alias' => false
         ]);
         $this->waitForIndex($new_index);
-        $this->assertTrue($this->client->indices()->exists(['index' => $index]), sprintf('Index %s does not exist', $index));
+        $this->assertTrue((new \Wa72\ESTools\Internal\ClientAdapter($this->client))->indices('exists', ['index' => $index]), sprintf('Index %s does not exist', $index));
         $this->assertFalse($this->helper->isAlias($index));
         $this->assertEquals($index, $new_index, sprintf('Expected index name: %s, got %s', $index, $new_index));
         $this->assertEmpty($this->helper->diffIndexSettings($index, $this->default_settings));
@@ -65,7 +65,7 @@ class IndexHelperTest extends ElasticsearchTestCase
         $this->assertEquals($aliases, $this->helper->getAliases($index));
 
         // index some data
-        $this->client->index(['index' => $index, 'type' => '_doc', 'body' => [
+        $this->client->index(['index' => $index] + ($this->usesMappingTypes() ? ['type' => '_doc'] : []) + ['body' => [
             'title' => 'First Document'
         ]]);
 
@@ -83,7 +83,7 @@ class IndexHelperTest extends ElasticsearchTestCase
         ]);
         $this->assertEquals($index . '-1', $new_index, sprintf('Expected index name: %s, got %s', $index . '-1', $new_index));
         $this->waitForIndex($new_index);
-        $this->assertTrue($this->client->indices()->exists(['index' => $index]), sprintf('Index %s does not exist', $index));
+        $this->assertTrue((new \Wa72\ESTools\Internal\ClientAdapter($this->client))->indices('exists', ['index' => $index]), sprintf('Index %s does not exist', $index));
         $this->assertTrue($this->helper->isAlias($index));
         $this->assertFalse($this->helper->isRealIndex($index));
         $this->assertEquals($new_index, $this->helper->getCurrentIndexVersionName($index));
@@ -105,7 +105,7 @@ class IndexHelperTest extends ElasticsearchTestCase
         ]);
         $this->assertEquals($index . '-2', $new_index1, sprintf('Expected index name: %s, got %s', $index . '-2', $new_index1));
         $this->waitForIndex($new_index1);
-        $this->assertTrue($this->client->indices()->exists(['index' => $index]));
+        $this->assertTrue((new \Wa72\ESTools\Internal\ClientAdapter($this->client))->indices('exists', ['index' => $index]));
         $this->assertTrue($this->helper->isAlias($index));
         $this->assertFalse($this->helper->isRealIndex($index));
         $this->assertEquals($new_index1, $this->helper->getCurrentIndexVersionName($index));
@@ -134,7 +134,7 @@ class IndexHelperTest extends ElasticsearchTestCase
         $new_index = $this->helper->createNewIndexVersion($index, $this->default_mapping, $this->default_settings);
         $this->assertEquals($index . '-1', $new_index, sprintf('Expected index name: %s, got %s', $index . '-1', $new_index));
         $this->waitForIndex($new_index);
-        $this->assertTrue($this->client->indices()->exists(['index' => $new_index]));
+        $this->assertTrue((new \Wa72\ESTools\Internal\ClientAdapter($this->client))->indices('exists', ['index' => $new_index]));
 
         // alias $index for $new_index not set yet
         $this->assertEquals($index, $this->helper->getCurrentIndexVersionName($index));
@@ -228,14 +228,14 @@ class IndexHelperTest extends ElasticsearchTestCase
         $mapping = $this->default_mapping;
         $mapping['_doc']['properties']['newfield'] = ['type' => 'keyword'];
         $diff = $this->helper->diffMappings($index, $mapping);
-        $this->assertEquals(['_doc.properties.newfield' => ['type' => 'keyword']], $diff['-']);
+        $this->assertEquals([($this->usesMappingTypes() ? '_doc.' : '') . 'properties.newfield' => ['type' => 'keyword']], $diff['-']);
         $this->assertArrayNotHasKey('+', $diff);
 
         // a field that is in the index but not in the given mapping
         $mapping = $this->default_mapping;
         unset($mapping['_doc']['properties']['tag']);
         $diff = $this->helper->diffMappings($index, $mapping);
-        $this->assertEquals(['_doc.properties.tag' => ['type' => 'keyword']], $diff['+']);
+        $this->assertEquals([($this->usesMappingTypes() ? '_doc.' : '') . 'properties.tag' => ['type' => 'keyword']], $diff['+']);
         $this->assertArrayNotHasKey('-', $diff);
 
         // changed analyzer settings
@@ -357,7 +357,7 @@ class IndexHelperTest extends ElasticsearchTestCase
         $ids = $helper->bulkIndex($index, [['_type' => '_doc', '_id' => 'typed', 'title' => 'with type']]);
         $this->assertEquals(['typed'], $ids);
         $this->assertEquals(33, $this->countDocuments($index));
-        $this->assertEquals(['title' => 'with type'], $this->client->get(['index' => $index, 'type' => '_doc', 'id' => 'typed'])['_source']);
+        $this->assertEquals(['title' => 'with type'], $this->client->get(['index' => $index, 'id' => 'typed'] + ($this->usesMappingTypes() ? ['type' => '_doc'] : []))['_source']);
 
         // nothing to index
         $this->assertEquals([], $helper->bulkIndex($index, [], '_doc'));
@@ -504,6 +504,6 @@ class IndexHelperTest extends ElasticsearchTestCase
         $this->assertEquals(12, $this->countDocuments($index));
 
         $result = $this->client->search(['index' => $index, 'body' => ['query' => ['term' => ['tag' => 'odd']]]]);
-        $this->assertEquals(0, $result['hits']['total']);
+        $this->assertEquals(0, $this->totalHits($result));
     }
 }

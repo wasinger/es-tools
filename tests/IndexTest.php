@@ -83,7 +83,7 @@ class IndexTest extends ElasticsearchTestCase
         $this->assertEquals([], $changed->checkAliases());
         $this->assertEquals(10, $this->countDocuments($changed->getName()));
         // Index::prepare() deletes old index versions
-        $this->assertFalse($this->client->indices()->exists(['index' => $this->prefix . 'index-1']));
+        $this->assertFalse((new \Wa72\ESTools\Internal\ClientAdapter($this->client))->indices('exists', ['index' => $this->prefix . 'index-1']));
     }
 
     public function testCheckAndSetAliases()
@@ -162,15 +162,15 @@ class IndexTest extends ElasticsearchTestCase
         $this->assertEquals(20, $index->count());
 
         $result = $index->search(['query' => ['term' => ['tag' => 'odd']]]);
-        $this->assertEquals(10, $result['hits']['total']);
+        $this->assertEquals(10, $this->totalHits($result));
         $this->assertCount(10, $result['hits']['hits']);
 
         $result = $index->search(['query' => ['match_all' => new \stdClass()]], [
             'size' => 5,
             'from' => 2,
-            'sort' => [['_id' => 'asc']]
+            'sort' => [['sort_id' => 'asc']]
         ]);
-        $this->assertEquals(20, $result['hits']['total']);
+        $this->assertEquals(20, $this->totalHits($result));
         $this->assertCount(5, $result['hits']['hits']);
         // sorted ids: doc1, doc10, doc11, doc12, doc13, ...
         $this->assertEquals('doc11', $result['hits']['hits'][0]['_id']);
@@ -203,7 +203,7 @@ class IndexTest extends ElasticsearchTestCase
         $this->assertTrue($index->exists());
         $this->assertTrue($index->deleteIndex());
         $this->assertFalse($index->exists());
-        $this->assertFalse($this->client->indices()->exists(['index' => $this->prefix . 'index-1']));
+        $this->assertFalse((new \Wa72\ESTools\Internal\ClientAdapter($this->client))->indices('exists', ['index' => $this->prefix . 'index-1']));
     }
 
     public function testLogger()

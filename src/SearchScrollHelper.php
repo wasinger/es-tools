@@ -1,6 +1,8 @@
 <?php
 namespace Wa72\ESTools;
 use Elasticsearch\Client;
+use Elastic\Elasticsearch\Client as ModernClient;
+use Wa72\ESTools\Internal\ClientAdapter;
 use Psr\Log\LoggerAwareTrait;
 
 /**
@@ -14,16 +16,16 @@ class SearchScrollHelper
     use LoggerAwareTrait;
 
     /**
-     * @var \Elasticsearch\Client
+     * @var ClientAdapter
      */
     private $client;
 
     /**
-     * @param \Elasticsearch\Client $client
+     * @param \Elasticsearch\Client|ModernClient $client
      */
-    public function __construct(Client $client)
+    public function __construct(Client|ModernClient $client)
     {
-        $this->client = $client;
+        $this->client = new ClientAdapter($client);
     }
 
     /**
@@ -57,38 +59,44 @@ class SearchScrollHelper
         $scroll = $options['scroll'] ?? '10s';
 
         $scroll_id = null;
-        while (true) {
-            if (!$scroll_id) { // first search request
-                $search_request = [
-                    'scroll' => $scroll,
-                    'size' => $size,
-                    'index' => $index,
-                    'type' => $type,
-                    'body' => [
-                        'query' => $query,
-                        '_source' => $_source,
-                        'sort' => [
-                            '_doc'
+        try {
+            while (true) {
+                if (!$scroll_id) { // first search request
+                    $search_request = [
+                        'scroll' => $scroll,
+                        'size' => $size,
+                        'index' => $index,
+                        'type' => $type,
+                        'body' => [
+                            'query' => $query,
+                            '_source' => $_source,
+                            'sort' => [
+                                '_doc'
+                            ]
                         ]
-                    ]
-                ];
-                $response = $this->client->search($search_request);
-            } else { // Execute a Scroll request
-                $response = $this->client->scroll([
-                        'scroll_id' => $scroll_id,
-                        'scroll' => $scroll
-                    ]
-                );
-            }
-            if ($this->logger) $this->logger->debug('Number of documents in current scroll: ' . count($response['hits']['hits']));
-            if (count($response['hits']['hits']) > 0) {
-                foreach ($response['hits']['hits'] as $hit) {
-                    yield $hit;
+                    ];
+                    $response = $this->client->request('search', $search_request);
+                } else { // Execute a Scroll request
+                    $response = $this->client->request('scroll', [
+                            'scroll_id' => $scroll_id,
+                            'scroll' => $scroll
+                        ]
+                    );
                 }
-                $scroll_id = $response['_scroll_id'];
-            } else {
-                if ($this->logger) $this->logger->debug('No more results in current scroll.');
-                break;
+                $scroll_id = $response['_scroll_id'] ?? $scroll_id;
+                if ($this->logger) $this->logger->debug('Number of documents in current scroll: ' . count($response['hits']['hits']));
+                if (count($response['hits']['hits']) > 0) {
+                    foreach ($response['hits']['hits'] as $hit) {
+                        yield $hit;
+                    }
+                } else {
+                    if ($this->logger) $this->logger->debug('No more results in current scroll.');
+                    break;
+                }
+            }
+        } finally {
+            if ($scroll_id) {
+                $this->client->request('clearScroll', ['body' => ['scroll_id' => [$scroll_id]]]);
             }
         }
     }

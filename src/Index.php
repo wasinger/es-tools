@@ -1,7 +1,10 @@
 <?php
 namespace Wa72\ESTools;
 use Elasticsearch\Client;
-use Elasticsearch\Common\Exceptions\Missing404Exception;
+use Elastic\Elasticsearch\Client as ModernClient;
+use Wa72\ESTools\Internal\ClientAdapter;
+use Wa72\ESTools\Internal\Mappings;
+use Wa72\ESTools\Internal\NotFoundException;
 use Psr\Log\LoggerAwareTrait;
 use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
@@ -12,7 +15,7 @@ class Index
     use LoggerAwareTrait;
 
     /**
-     * @var Client
+     * @var ClientAdapter
      */
     private $es;
     /**
@@ -28,26 +31,15 @@ class Index
 
     private $type = '_doc';
 
-    public function __construct(Client $es_client, string $index_name, $mappings, $settings, $aliases)
+    public function __construct(Client|ModernClient $es_client, string $index_name, $mappings, $settings, $aliases)
     {
-        $this->es = $es_client;
-        $this->indexhelper = new IndexHelper($this->es);
+        $this->es = new ClientAdapter($es_client);
+        $this->indexhelper = new IndexHelper($es_client);
         $this->index_name = $index_name;
         $this->mappings = $mappings;
         $this->settings = $settings;
         $this->aliases = $aliases;
-        if (isset($mappings['mappings'])) {
-            $mappings = $mappings['mappings'];
-        }
-        if (!empty($mappings)) {
-            if (count($mappings) == 1) {
-                // Get Type from mappings array
-                $this->type = array_keys($mappings)[0];
-            } else {
-                // In preparation for ES 6 we support only one type per index
-                throw new \Exception('Mappings array is supposed to contain exactly one element the key of which is the mapping type.');
-            }
-        }
+        $this->type = Mappings::type($mappings);
     }
 
     public function getName()
@@ -169,10 +161,10 @@ class Index
             'ttl' => isset($data['_ttl']) ? $data['_ttl'] : null,
             'routing' => isset($data['_routing']) ? $data['_routing'] : null,
             'parent' => isset($data['_parent']) ? $data['_parent'] : null,
-        ]);
+        ], static fn($value) => $value !== null);
         unset($data['_type'], $data['_ttl'], $data['_routing'], $data['_parent']);
         $params['body'] = $data;
-        $r = $this->es->index($params);
+        $r = $this->es->request('index', $params);
         return $r;
     }
 
@@ -192,8 +184,8 @@ class Index
         ];
 
         try {
-            $r = $this->es->delete($params);
-        } catch (Missing404Exception $e) {
+            $r = $this->es->request('delete', $params);
+        } catch (NotFoundException $e) {
             // the client throws an exception if the document does not exist
             $r = ['result' => 'not_found'];
         }
@@ -254,9 +246,9 @@ class Index
             'id' => $id
         ];
         try {
-            $r = $this->es->get($params);
+            $r = $this->es->request('get', $params);
             return $r;
-        } catch (\Exception $e) {
+        } catch (NotFoundException $e) {
             // Document not found
             return null;
         }
@@ -279,9 +271,9 @@ class Index
             ]
         ];
         try {
-            $r = $this->es->mget($params);
+            $r = $this->es->request('mget', $params);
             return $r['docs'];
-        } catch (\Exception $e) {
+        } catch (NotFoundException $e) {
             // Document not found
             return [];
         }
@@ -311,7 +303,7 @@ class Index
         if (isset($options['sort'])) {
             $params['body']['sort'] = $options['sort'];
         }
-        return $this->es->search($params);
+        return $this->es->request('search', $params);
     }
 
     public function findOneBy($field, $value)
@@ -329,7 +321,7 @@ class Index
                 'size' => 1
             ]
         ];
-        $result = $this->es->search($params);
+        $result = $this->es->request('search', $params);
         if (!empty($result['hits']['hits'])) {
             return $result['hits']['hits'][0];
         }
@@ -347,7 +339,7 @@ class Index
     public function deleteIndex(): bool
     {
         $params = ['index' => $this->getRealIndexName()];
-        $response = $this->es->indices()->delete($params);
+        $response = $this->es->indices('delete', $params);
         if (!empty($response['acknowledged'])) {
             $this->log(LogLevel::DEBUG, sprintf('Index %s successfully deleted.', $this->getRealIndexName()));
             return true;
@@ -363,7 +355,7 @@ class Index
     public function count(): int|false
     {
         $index = $this->indexhelper->getCurrentIndexVersionName($this->index_name);
-        $res = $this->es->count(['index' => $index]);
+        $res = $this->es->request('count', ['index' => $index]);
         if (isset($res['count'])) {
             return $res['count'];
         }
@@ -373,15 +365,15 @@ class Index
     /**
      * @param LoggerInterface $logger
      */
-    public function setLogger(LoggerInterface $logger)
+    public function setLogger(LoggerInterface $logger): void
     {
         $this->logger = $logger;
         $this->indexhelper->setLogger($logger);
     }
 
-    public function getElasticsearchClient(): Client
+    public function getElasticsearchClient(): Client|ModernClient
     {
-        return $this->es;
+        return $this->es->getClient();
     }
 
     private function log($level, $message)

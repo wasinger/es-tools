@@ -2,7 +2,10 @@
 namespace Wa72\ESTools;
 
 use Elasticsearch\Client;
-use Elasticsearch\Common\Exceptions\Missing404Exception;
+use Elastic\Elasticsearch\Client as ModernClient;
+use Wa72\ESTools\Internal\ClientAdapter;
+use Wa72\ESTools\Internal\Mappings;
+use Wa72\ESTools\Internal\NotFoundException;
 use Iterator;
 use Psr\Log\LoggerAwareTrait;
 
@@ -15,7 +18,7 @@ class IndexHelper
     use LoggerAwareTrait;
 
     /**
-     * @var \Elasticsearch\Client
+     * @var ClientAdapter
      */
     private $client;
 
@@ -40,12 +43,12 @@ class IndexHelper
     private $index_version_name_incrementor;
 
     /**
-     * @param \Elasticsearch\Client $client
+     * @param \Elasticsearch\Client|ModernClient $client
      * @param array $options
      */
-    public function __construct(Client $client, $options = [])
+    public function __construct(Client|ModernClient $client, $options = [])
     {
-        $this->client = $client;
+        $this->client = new ClientAdapter($client);
         $this->options = array_merge($this->options, $options);
     }
 
@@ -84,7 +87,7 @@ class IndexHelper
 
         $name = $index;
 
-        if (!$this->client->indices()->exists(['index' => $index])) {
+        if (!$this->exists($index)) {
             // Index does not exist, create it
             if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::prepareIndex: index ' . $index . " does not exist, create it");
             if ($use_alias) {
@@ -129,7 +132,7 @@ class IndexHelper
 
     public function exists($index): bool
     {
-        return $this->client->indices()->exists(['index' => $index]);
+        return $this->client->indices('exists', ['index' => $index]);
     }
 
     /**
@@ -144,10 +147,13 @@ class IndexHelper
     public function diffMappings($index, $mappings)
     {
         if (isset($mappings['mappings'])) $mappings = $mappings['mappings'];
-        normalizeDotPathNotation($mappings);
-        $real_mappings = $this->client->indices()->getMapping(['index' => $index]);
+        $mappings = Mappings::normalize($mappings, $this->client->usesMappingTypes());
+        $real_mappings = $this->client->indices('getMapping', ['index' => $index]);
         $key = array_keys($real_mappings)[0];
         $real_mappings = $real_mappings[$key]['mappings'];
+        $mappings = Mappings::forComparison($mappings, $this->client->usesMappingTypes());
+        $real_mappings = Mappings::forComparison($real_mappings, $this->client->usesMappingTypes());
+        normalizeDotPathNotation($mappings);
         return compare_assoc_arrays($mappings, $real_mappings);
     }
 
@@ -202,7 +208,7 @@ class IndexHelper
     public function diffIndexSettings($index, $settings)
     {
         $settings = $this->normalizeIndexSettings($settings);
-        $real_settings = $this->client->indices()->getSettings(['index' => $index]);
+        $real_settings = $this->client->indices('getSettings', ['index' => $index]);
         $key = array_keys($real_settings)[0];
         $real_settings = $real_settings[$key]['settings']['index'];
         $settings_to_consider = ['analysis', 'mapping'];
@@ -261,7 +267,7 @@ class IndexHelper
         $old_real_index = null;
         $old_aliases = [];
         try {
-            $data = $this->client->indices()->getAlias(['name' => $alias]);
+            $data = $this->client->indices('getAlias', ['name' => $alias]);
             // the alias must point to exactly 1 index
             if (count($data) == 1) {
                 $old_real_index = array_keys($data)[0];
@@ -272,12 +278,12 @@ class IndexHelper
             } else {
                 return false;
             }
-        } catch (Missing404Exception $e) {
+        } catch (NotFoundException $e) {
             // alias does not exist, check whether there is an index with this name
-            if ($this->client->indices()->exists(['index' => $alias])) {
+            if ($this->client->indices('exists', ['index' => $alias])) {
                 // the given alias name is an existing index
                 $old_real_index = $alias;
-                $old_aliases = array_keys($this->client->indices()->getAlias(['index' => $alias])[$alias]['aliases']);
+                $old_aliases = array_keys($this->client->indices('getAlias', ['index' => $alias])[$alias]['aliases']);
             }
         }
 
@@ -306,7 +312,7 @@ class IndexHelper
                 $alias_actions[] = ['remove' => ['index' => $old_real_index, 'alias' => $add_alias]];
             }
         }
-        $response = $this->client->indices()->updateAliases([
+        $response = $this->client->indices('updateAliases', [
             'body' => [
                 'actions' => $alias_actions
             ]
@@ -334,7 +340,7 @@ class IndexHelper
         $this->switchAlias($index, $new_index, $aliases);
         // If $index was a real index (not an alias) it has already been removed by switchAlias()
         if ($delete_old && $current && $current !== $index && $current !== $new_index) {
-            $this->client->indices()->delete(['index' => $current]);
+            $this->client->indices('delete', ['index' => $current]);
             if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::reindexToNewIndexVersion: old index version ' . $current . ' deleted.');
         }
         return $new_index;
@@ -359,7 +365,7 @@ class IndexHelper
         $new_index = $this->createNewIndexVersion($index, $mappings, $settings);
         // use the mapping type from the mappings array as default type for the documents
         $m = isset($mappings['mappings']) ? $mappings['mappings'] : $mappings;
-        $type = (is_array($m) && count($m) == 1) ? array_keys($m)[0] : null;
+        $type = Mappings::type($m);
         $this->bulkIndex($new_index, $documents, $type);
         $this->switchAlias($index, $new_index, $aliases);
         return $new_index;
@@ -389,24 +395,22 @@ class IndexHelper
                 // cast to object so that empty metadata is encoded as {} instead of []
                 'index' => (object) array_filter(
                     [
-                        '_type' => isset($document['_type']) ? $document['_type'] : null,
+                        '_type' => $this->client->usesMappingTypes() ? ($document['_type'] ?? $type ?? '_doc') : null,
                         '_id' => isset($document['_id']) ? $document['_id'] : null,
-                        '_ttl' => isset($document['_ttl']) ? $document['_ttl'] : null,
-                        '_routing' => isset($document['_routing']) ? $document['_routing'] : null,
-                        '_parent' => isset($document['_parent']) ? $document['_parent'] : null,
-                    ]
+                        'routing' => $document['_routing'] ?? null,
+                    ], static fn($value) => $value !== null
                 )
             ];
             unset($document['_type'], $document['_id'], $document['_ttl'], $document['_routing'], $document['_parent']);
             $bulk_queries['body'][] = $document;
             if ($count % $this->options['bulk_size'] == 0) {
-                $response = $this->client->bulk($bulk_queries);
+                $response = $this->client->request('bulk', $bulk_queries);
                 $ids = array_merge($ids, $this->_evaluateBulkIndexResponse($response));
                 $bulk_queries['body'] = [];
             }
         }
         if (!empty($bulk_queries['body'])) {
-            $response = $this->client->bulk($bulk_queries);
+            $response = $this->client->request('bulk', $bulk_queries);
             $ids = array_merge($ids, $this->_evaluateBulkIndexResponse($response));
         }
         if ($this->logger) $this->logger->info('Documents indexed: ' . count($ids));
@@ -443,10 +447,10 @@ class IndexHelper
     public function getCurrentIndexVersionName($index): string|false
     {
         try {
-            $aliases = $this->client->indices()->getAlias(['name' => $index]);
-        } catch (Missing404Exception $e) {
+            $aliases = $this->client->indices('getAlias', ['name' => $index]);
+        } catch (NotFoundException $e) {
             // no alias with this name
-            if ($this->client->indices()->exists(['index' => $index])) {
+            if ($this->client->indices('exists', ['index' => $index])) {
                 // if the given index name is a real index, return the index name
                 return $index;
             } else {
@@ -475,7 +479,7 @@ class IndexHelper
             $new_index = $this->generateIncrementedIndexVersionName($index, $current);
             if ($this->logger) $this->logger->debug('Trying new index name: ' . $new_index);
             $current = $new_index;
-        } while ($this->client->indices()->exists(['index' => $new_index]));
+        } while ($this->client->indices('exists', ['index' => $new_index]));
         return $new_index;
     }
 
@@ -513,7 +517,7 @@ class IndexHelper
             foreach ($aliases as $alias) {
                 $alias_actions[] = ['add' => ['index' => $index, 'alias' => $alias]];
             }
-            $r = $this->client->indices()->updateAliases([
+            $r = $this->client->indices('updateAliases', [
                 'body' => [
                     'actions' => $alias_actions
                 ]
@@ -524,12 +528,12 @@ class IndexHelper
 
     public function isRealIndex($index)
     {
-        return $this->client->indices()->exists(['index' => $index]) && !$this->client->indices()->existsAlias(['name' => $index]);
+        return $this->client->indices('exists', ['index' => $index]) && !$this->client->indices('existsAlias', ['name' => $index]);
     }
 
     public function isAlias($name)
     {
-        return $this->client->indices()->existsAlias(['name' => $name]);
+        return $this->client->indices('existsAlias', ['name' => $name]);
     }
 
     /**
@@ -540,7 +544,7 @@ class IndexHelper
      */
     public function getAliases($index)
     {
-        $response = $this->client->indices()->getAliases(['index' => $index]);
+        $response = $this->client->indices('getAlias', ['index' => $index]);
         $indices = array_keys($response);
         if ($indices[0] !== $index) throw new \InvalidArgumentException('Argument $index must be a real index, not alias');
         return array_keys($response[$index]['aliases']);
@@ -557,8 +561,8 @@ class IndexHelper
     public function reindex($src_index, $dest_index)
     {
         // make sure all recently indexed documents are visible to the reindex process
-        $this->client->indices()->refresh(['index' => $src_index]);
-        $res = $this->client->reIndex([
+        $this->client->indices('refresh', ['index' => $src_index]);
+        $res = $this->client->request('reIndex', [
             'refresh' => true,
             'body' => [
                 'source' => [
@@ -585,13 +589,13 @@ class IndexHelper
     public function cleanup($index, callable $voter, array $scroll_options =[])
     {
         if ($this->logger) $this->logger->info('Wa72\ESTools\IndexHelper::cleanup(): Checking for documents to delete from index...');
-        $scrollhelper = new SearchScrollHelper($this->client);
+        $scrollhelper = new SearchScrollHelper($this->client->getClient());
         if ($this->logger) $scrollhelper->setLogger($this->logger);
         $counter = 0;
         foreach ($scrollhelper->scrollSearch($index, $scroll_options) as $hit) {
             $id = $hit['_id'];
             if ($this->logger) $this->logger->debug(sprintf('Wa72\ESTools\IndexHelper::cleanup(): check document id: %s', $id));
-            $type = $hit['_type'];
+            $type = $hit['_type'] ?? '_doc';
             $current_index = $hit['_index'];
             if (!call_user_func_array($voter, [&$hit])) {
                 $params = [
@@ -599,7 +603,7 @@ class IndexHelper
                     'type' => $type,
                     'id' => $id
                 ];
-                $this->client->delete($params);
+                $this->client->request('delete', $params);
                 $counter++;
                 if ($this->logger) $this->logger->debug(sprintf('Wa72\ESTools\IndexHelper::cleanup(): deleted %s/%s/%s', $current_index, $type, $id));
             }
@@ -620,6 +624,7 @@ class IndexHelper
         if (!empty($settings)) {
             $body['settings'] = $settings;
         }
+        $mappings = Mappings::normalize($mappings, $this->client->usesMappingTypes());
         if (!empty($mappings)) {
             $body['mappings'] = $mappings;
         }
@@ -629,13 +634,13 @@ class IndexHelper
         if (!empty($body)) {
             $params['body'] = $body;
         }
-        $result = $this->client->indices()->create($params);
+        $result = $this->client->indices('create', $params);
         if (!empty($aliases)) {
             $alias_actions = [];
             foreach ($aliases as $alias) {
                 $alias_actions[] = ['add' => ['index' => $name, 'alias' => $alias]];
             }
-            $this->client->indices()->updateAliases([
+            $this->client->indices('updateAliases', [
                 'body' => [
                     'actions' => $alias_actions
                 ]

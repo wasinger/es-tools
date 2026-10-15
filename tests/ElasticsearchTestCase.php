@@ -3,6 +3,9 @@ namespace Wa72\ESTools\tests;
 
 use Elasticsearch\Client;
 use Elasticsearch\ClientBuilder;
+use Elastic\Elasticsearch\Client as ModernClient;
+use Elastic\Elasticsearch\ClientBuilder as ModernClientBuilder;
+use Wa72\ESTools\Internal\ClientAdapter;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -14,7 +17,7 @@ use PHPUnit\Framework\TestCase;
 abstract class ElasticsearchTestCase extends TestCase
 {
     /**
-     * @var Client
+     * @var Client|ModernClient
      */
     protected $client;
 
@@ -23,16 +26,21 @@ abstract class ElasticsearchTestCase extends TestCase
     protected $default_mapping;
     protected $default_settings;
 
-    public static function createClient(): Client
+    public static function createClient(): Client|ModernClient
     {
-        return ClientBuilder::create()->setHosts([getenv('ES_HOST') ?: 'localhost:9200'])->build();
+        $builder = class_exists(ModernClientBuilder::class) ? ModernClientBuilder::create() : ClientBuilder::create();
+        $host = getenv('ES_HOST') ?: 'localhost:9200';
+        if (!str_contains($host, '://')) {
+            $host = 'http://' . $host;
+        }
+        return $builder->setHosts([$host])->build();
     }
 
     protected function setUp(): void
     {
         $this->client = static::createClient();
         try {
-            $available = $this->client->ping();
+            $available = (new ClientAdapter($this->client))->request('ping');
         } catch (\Exception $e) {
             $available = false;
         }
@@ -71,6 +79,7 @@ abstract class ElasticsearchTestCase extends TestCase
                         "type" => "text",
                         "analyzer" => "my_analyzer"
                     ],
+                    "sort_id" => ["type" => "keyword"],
                     "tag" => [
                         "type" => "keyword"
                     ]
@@ -95,6 +104,17 @@ abstract class ElasticsearchTestCase extends TestCase
         }
     }
 
+    protected function usesMappingTypes(): bool
+    {
+        return (new ClientAdapter($this->client))->usesMappingTypes();
+    }
+
+    protected function totalHits($result): int
+    {
+        $total = $result['hits']['total'];
+        return is_array($total) ? $total['value'] : $total;
+    }
+
     protected function refresh(string $index): void
     {
         $this->client->indices()->refresh(['index' => $index]);
@@ -114,6 +134,7 @@ abstract class ElasticsearchTestCase extends TestCase
         for ($i = 1; $i <= $count; $i++) {
             $doc = [
                 'title' => 'Document ' . $i,
+                'sort_id' => 'doc' . $i,
                 'tag' => $i % 2 ? 'odd' : 'even',
             ];
             if ($with_id) {

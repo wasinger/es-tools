@@ -56,4 +56,22 @@ class SearchScrollHelperTest extends ElasticsearchTestCase
         ]), false);
         $this->assertEquals([], $hits);
     }
+    public function testScrollContextsAreReleasedAfterCompletionAndEarlyStop(): void
+    {
+        $openContexts = function (): int {
+            return $this->client->indices()->stats(['index' => $this->index, 'metric' => 'search'])
+                ['_all']['total']['search']['open_contexts'];
+        };
+        $this->assertSame(0, $openContexts());
+        $helper = new SearchScrollHelper($this->client);
+        iterator_to_array($helper->scrollSearch($this->index, ['size' => 100]), false);
+        $this->assertSame(0, $openContexts());
+
+        $scroll = $helper->scrollSearch($this->index, ['size' => 10]);
+        $scroll->rewind();
+        $this->assertGreaterThan(0, $openContexts());
+        unset($scroll);
+        $this->assertSame(0, $openContexts());
+    }
+
 }

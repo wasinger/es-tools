@@ -14,31 +14,40 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php-version: ['8.0', '8.1', '8.2', '8.3', '8.4']
-        es-version: ['6.8.23']
-        # es-port: a distinct host port for every job, so that jobs running concurrently on the same host
-        # (e.g. locally with nektos/act) do not conflict with each other or with a local Elasticsearch on port 9200
+        php-version: ['8.3', '8.4', '8.5']
+        es-version: ['6.8.23', '7.17.29', '8.19.23', '9.5.5']
+        # Match the official PHP client to the server major version.
+        # Unique host ports also allow concurrent local act jobs.
         include:
-          - php-version: '8.0'
-            es-port: 19280
-          - php-version: '8.1'
-            es-port: 19281
-          - php-version: '8.2'
-            es-port: 19282
+          - es-version: '6.8.23'
+            es-client: '^6.8.4'
+            es-port-prefix: '196'
+          - es-version: '7.17.29'
+            es-client: '^7.17'
+            es-port-prefix: '197'
+          - es-version: '8.19.23'
+            es-client: '^8.19'
+            es-port-prefix: '198'
+          - es-version: '9.5.5'
+            es-client: '^9.0'
+            es-port-prefix: '199'
           - php-version: '8.3'
-            es-port: 19283
+            php-port-suffix: '83'
           - php-version: '8.4'
-            es-port: 19284
+            php-port-suffix: '84'
+          - php-version: '8.5'
+            php-port-suffix: '85'
 
     services:
       elasticsearch:
         image: docker.elastic.co/elasticsearch/elasticsearch:${{ matrix.es-version }}
         env:
           discovery.type: single-node
+          action.destructive_requires_name: 'false'
           xpack.security.enabled: 'false'
           ES_JAVA_OPTS: -Xms512m -Xmx512m
         ports:
-          - ${{ matrix.es-port }}:9200
+          - ${{ matrix.es-port-prefix }}${{ matrix.php-port-suffix }}:9200
         options: >-
           --health-cmd "curl -fs http://localhost:9200/_cluster/health?wait_for_status=yellow || exit 1"
           --health-interval 10s
@@ -68,17 +77,21 @@ jobs:
       run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
 
     - name: Cache Composer packages
+      # Local act runs do not need the GitHub cache service.
+      if: ${{ !env.ACT }}
       uses: actions/cache@v4
       with:
         path: ${{ steps.composer-cache.outputs.dir }}
-        key: ${{ runner.os }}-php-${{ matrix.php-version }}-${{ hashFiles('composer.json') }}
+        key: ${{ runner.os }}-php-${{ matrix.php-version }}-es-${{ matrix.es-version }}-${{ hashFiles('composer.json') }}
         restore-keys: |
-          ${{ runner.os }}-php-${{ matrix.php-version }}-
+          ${{ runner.os }}-php-${{ matrix.php-version }}-es-${{ matrix.es-version }}-
 
     # composer.lock is not part of the repository, so this resolves the newest
     # dependencies (incl. PHPUnit version) compatible with the PHP version of the matrix
     - name: Install Composer dependencies
-      run: composer update --prefer-dist --no-progress --no-interaction
+      run: |
+        composer require --no-update --no-interaction 'elasticsearch/elasticsearch:${{ matrix.es-client }}'
+        composer update --prefer-dist --no-progress --no-interaction
 
     # Where the service container is reachable depends on the environment:
     # - GitHub hosted runners and nektos/act (job container in host network): on localhost via the mapped host port
@@ -87,7 +100,7 @@ jobs:
       env:
         MAPPED_PORT: ${{ job.services.elasticsearch.ports['9200'] }}
       run: |
-        candidates="localhost:${{ matrix.es-port }}"
+        candidates="localhost:${{ matrix.es-port-prefix }}${{ matrix.php-port-suffix }}"
         [ -n "$MAPPED_PORT" ] && candidates="$candidates localhost:$MAPPED_PORT"
         candidates="$candidates elasticsearch:9200"
         echo "Trying Elasticsearch at: $candidates"
