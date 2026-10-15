@@ -3,6 +3,7 @@ namespace Wa72\ESTools;
 
 use Elasticsearch\Client;
 use Elastic\Elasticsearch\Client as ModernClient;
+use OpenSearch\Client as OpenSearchClient;
 use Wa72\ESTools\Internal\ClientAdapter;
 use Wa72\ESTools\Internal\Mappings;
 use Wa72\ESTools\Internal\NotFoundException;
@@ -43,10 +44,10 @@ class IndexHelper
     private $index_version_name_incrementor;
 
     /**
-     * @param \Elasticsearch\Client|ModernClient $client
+     * @param \Elasticsearch\Client|ModernClient|OpenSearchClient $client
      * @param array $options
      */
-    public function __construct(Client|ModernClient $client, $options = [])
+    public function __construct(Client|ModernClient|OpenSearchClient $client, $options = [])
     {
         $this->client = new ClientAdapter($client);
         $this->options = array_merge($this->options, $options);

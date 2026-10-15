@@ -2,6 +2,7 @@
 namespace Wa72\ESTools;
 use Elasticsearch\Client;
 use Elastic\Elasticsearch\Client as ModernClient;
+use OpenSearch\Client as OpenSearchClient;
 use Wa72\ESTools\Internal\ClientAdapter;
 use Wa72\ESTools\Internal\Mappings;
 use Wa72\ESTools\Internal\NotFoundException;
@@ -31,7 +32,7 @@ class Index
 
     private $type = '_doc';
 
-    public function __construct(Client|ModernClient $es_client, string $index_name, $mappings, $settings, $aliases)
+    public function __construct(Client|ModernClient|OpenSearchClient $es_client, string $index_name, $mappings, $settings, $aliases)
     {
         $this->es = new ClientAdapter($es_client);
         $this->indexhelper = new IndexHelper($es_client);
@@ -371,9 +372,15 @@ class Index
         $this->indexhelper->setLogger($logger);
     }
 
-    public function getElasticsearchClient(): Client|ModernClient
+    public function getClient(): Client|ModernClient|OpenSearchClient
     {
         return $this->es->getClient();
+    }
+
+    /** Kept for compatibility; returns the native client for either engine. */
+    public function getElasticsearchClient(): Client|ModernClient|OpenSearchClient
+    {
+        return $this->getClient();
     }
 
     private function log($level, $message)

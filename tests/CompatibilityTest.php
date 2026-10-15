@@ -95,7 +95,9 @@ class CompatibilityTest extends ElasticsearchTestCase
             ]);
         }
         $this->assertNotNull($error, 'A read block must not be reported as a missing document.');
-        $this->assertSame(403, $error->getCode());
+        $statusCode = $error instanceof \OpenSearch\Exception\HttpExceptionInterface
+            ? $error->getStatusCode() : $error->getCode();
+        $this->assertSame(403, $statusCode);
     }
 
     public function testEmptyLegacyMappingsDoNotSendAnArrayAsTheMappingObject(): void

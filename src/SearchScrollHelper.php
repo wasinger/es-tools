@@ -2,6 +2,7 @@
 namespace Wa72\ESTools;
 use Elasticsearch\Client;
 use Elastic\Elasticsearch\Client as ModernClient;
+use OpenSearch\Client as OpenSearchClient;
 use Wa72\ESTools\Internal\ClientAdapter;
 use Psr\Log\LoggerAwareTrait;
 
@@ -21,9 +22,9 @@ class SearchScrollHelper
     private $client;
 
     /**
-     * @param \Elasticsearch\Client|ModernClient $client
+     * @param \Elasticsearch\Client|ModernClient|OpenSearchClient $client
      */
-    public function __construct(Client|ModernClient $client)
+    public function __construct(Client|ModernClient|OpenSearchClient $client)
     {
         $this->client = new ClientAdapter($client);
     }

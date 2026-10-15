@@ -1,13 +1,22 @@
 {
     "name": "wa72/es-tools",
-    "description": "PHP Helper classes for Elasticsearch",
+    "description": "PHP Helper classes for Elasticsearch and OpenSearch",
     "type": "library",
     "require": {
         "php":"^8",
-        "elasticsearch/elasticsearch": "^6.8.4 || ^7.17 || ^8.19 || ^9.0",
         "psr/log":"^1|^2|^3"
     },
+    "suggest": {
+        "elasticsearch/elasticsearch": "Install ^6.8.4, ^7.17, ^8.19 or ^9.0 to use Elasticsearch",
+        "opensearch-project/opensearch-php": "Install ^2.7 to use OpenSearch"
+    },
+    "conflict": {
+        "elasticsearch/elasticsearch": "<6.8.4 || >=7.0 <7.17 || >=8.0 <8.19 || >=10.0",
+        "opensearch-project/opensearch-php": "<2.7.0 || >=3.0"
+    },
     "require-dev": {
+        "elasticsearch/elasticsearch": "^6.8.4 || ^7.17 || ^8.19 || ^9.0",
+        "opensearch-project/opensearch-php": "^2.7",
         "guzzlehttp/guzzle": "^7.0",
         "phpunit/phpunit": "^9|^10|^11"
     },

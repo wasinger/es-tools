@@ -15,22 +15,58 @@ jobs:
       fail-fast: false
       matrix:
         php-version: ['8.3', '8.4', '8.5']
-        es-version: ['6.8.23', '7.17.29', '8.19.23', '9.5.5']
-        # Match the official PHP client to the server major version.
-        # Unique host ports also allow concurrent local act jobs.
+        backend: ['elasticsearch-6', 'elasticsearch-7', 'elasticsearch-8', 'elasticsearch-9', 'opensearch-2', 'opensearch-3']
+        # Install only the selected native client, including in development dependencies.
+        # Unique host ports allow concurrent local act jobs.
         include:
-          - es-version: '6.8.23'
-            es-client: '^6.8.4'
-            es-port-prefix: '196'
-          - es-version: '7.17.29'
-            es-client: '^7.17'
-            es-port-prefix: '197'
-          - es-version: '8.19.23'
-            es-client: '^8.19'
-            es-port-prefix: '198'
-          - es-version: '9.5.5'
-            es-client: '^9.0'
-            es-port-prefix: '199'
+          - backend: 'elasticsearch-6'
+            engine: 'elasticsearch'
+            server-version: '6.8.23'
+            image: 'docker.elastic.co/elasticsearch/elasticsearch:6.8.23'
+            client-package: 'elasticsearch/elasticsearch'
+            client-version: '^6.8.4'
+            port-prefix: '196'
+            service-options: '--env=xpack.security.enabled=false'
+          - backend: 'elasticsearch-7'
+            engine: 'elasticsearch'
+            server-version: '7.17.29'
+            image: 'docker.elastic.co/elasticsearch/elasticsearch:7.17.29'
+            client-package: 'elasticsearch/elasticsearch'
+            client-version: '^7.17'
+            port-prefix: '197'
+            service-options: '--env=xpack.security.enabled=false'
+          - backend: 'elasticsearch-8'
+            engine: 'elasticsearch'
+            server-version: '8.19.23'
+            image: 'docker.elastic.co/elasticsearch/elasticsearch:8.19.23'
+            client-package: 'elasticsearch/elasticsearch'
+            client-version: '^8.19'
+            port-prefix: '198'
+            service-options: '--env=xpack.security.enabled=false'
+          - backend: 'elasticsearch-9'
+            engine: 'elasticsearch'
+            server-version: '9.5.5'
+            image: 'docker.elastic.co/elasticsearch/elasticsearch:9.5.5'
+            client-package: 'elasticsearch/elasticsearch'
+            client-version: '^9.0'
+            port-prefix: '199'
+            service-options: '--env=xpack.security.enabled=false'
+          - backend: 'opensearch-2'
+            engine: 'opensearch'
+            server-version: '2.19.6'
+            image: 'opensearchproject/opensearch:2.19.6'
+            client-package: 'opensearch-project/opensearch-php'
+            client-version: '^2.7'
+            port-prefix: '202'
+            service-options: '--workdir=/usr/share/opensearch --env=DISABLE_SECURITY_PLUGIN=true --env=DISABLE_INSTALL_DEMO_CONFIG=true'
+          - backend: 'opensearch-3'
+            engine: 'opensearch'
+            server-version: '3.9.0'
+            image: 'opensearchproject/opensearch:3.9.0'
+            client-package: 'opensearch-project/opensearch-php'
+            client-version: '^2.7'
+            port-prefix: '203'
+            service-options: '--workdir=/usr/share/opensearch --env=DISABLE_SECURITY_PLUGIN=true --env=DISABLE_INSTALL_DEMO_CONFIG=true'
           - php-version: '8.3'
             php-port-suffix: '83'
           - php-version: '8.4'
@@ -38,17 +74,22 @@ jobs:
           - php-version: '8.5'
             php-port-suffix: '85'
 
+    env:
+      SEARCH_ENGINE: ${{ matrix.engine }}
+      EXPECTED_SEARCH_VERSION: ${{ matrix.server-version }}
+
     services:
-      elasticsearch:
-        image: docker.elastic.co/elasticsearch/elasticsearch:${{ matrix.es-version }}
-        env:
-          discovery.type: single-node
-          action.destructive_requires_name: 'false'
-          xpack.security.enabled: 'false'
-          ES_JAVA_OPTS: -Xms512m -Xmx512m
+      search:
+        image: ${{ matrix.image }}
         ports:
-          - ${{ matrix.es-port-prefix }}${{ matrix.php-port-suffix }}:9200
+          - ${{ matrix.port-prefix }}${{ matrix.php-port-suffix }}:9200
+        # Keep service environment in options: act replaces env when options also contain --env.
         options: >-
+          --env=discovery.type=single-node
+          --env=action.destructive_requires_name=false
+          --env="ES_JAVA_OPTS=-Xms512m -Xmx512m"
+          --env="OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+          ${{ matrix.service-options }}
           --health-cmd "curl -fs http://localhost:9200/_cluster/health?wait_for_status=yellow || exit 1"
           --health-interval 10s
           --health-timeout 5s
@@ -82,42 +123,54 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ${{ steps.composer-cache.outputs.dir }}
-        key: ${{ runner.os }}-php-${{ matrix.php-version }}-es-${{ matrix.es-version }}-${{ hashFiles('composer.json') }}
+        key: ${{ runner.os }}-php-${{ matrix.php-version }}-${{ matrix.backend }}-${{ hashFiles('composer.json') }}
         restore-keys: |
-          ${{ runner.os }}-php-${{ matrix.php-version }}-es-${{ matrix.es-version }}-
+          ${{ runner.os }}-php-${{ matrix.php-version }}-${{ matrix.backend }}-
 
     # composer.lock is not part of the repository, so this resolves the newest
     # dependencies (incl. PHPUnit version) compatible with the PHP version of the matrix
     - name: Install Composer dependencies
       run: |
-        composer require --no-update --no-interaction 'elasticsearch/elasticsearch:${{ matrix.es-client }}'
+        composer remove --dev --no-update --no-interaction elasticsearch/elasticsearch opensearch-project/opensearch-php
+        composer require --dev --no-update --no-interaction '${{ matrix.client-package }}:${{ matrix.client-version }}'
         composer update --prefer-dist --no-progress --no-interaction
 
     # Where the service container is reachable depends on the environment:
     # - GitHub hosted runners and nektos/act (job container in host network): on localhost via the mapped host port
     # - job container in the same docker network as the service: via the service name
-    - name: Wait for Elasticsearch
+    - name: Wait for search server
       env:
-        MAPPED_PORT: ${{ job.services.elasticsearch.ports['9200'] }}
+        MAPPED_PORT: ${{ job.services.search.ports['9200'] }}
       run: |
-        candidates="localhost:${{ matrix.es-port-prefix }}${{ matrix.php-port-suffix }}"
+        candidates="localhost:${{ matrix.port-prefix }}${{ matrix.php-port-suffix }}"
         [ -n "$MAPPED_PORT" ] && candidates="$candidates localhost:$MAPPED_PORT"
-        candidates="$candidates elasticsearch:9200"
-        echo "Trying Elasticsearch at: $candidates"
+        candidates="$candidates search:9200"
+        echo "Trying search server at: $candidates"
         for i in $(seq 1 36); do
           for host in $candidates; do
             if curl -fs --noproxy '*' "http://$host/_cluster/health?wait_for_status=yellow&timeout=5s" > /dev/null; then
-              echo "Elasticsearch is available at $host"
+              echo "Search server is available at $host"
               echo "ES_HOST=$host" >> $GITHUB_ENV
               curl -s --noproxy '*' "http://$host"
               exit 0
             fi
           done
-          echo "Still waiting for Elasticsearch ..."
+          echo "Still waiting for search server ..."
           sleep 5
         done
-        echo "Elasticsearch did not become available"
+        echo "Search server did not become available"
         exit 1
+
+    - name: Verify isolated client installation
+      run: |
+        php -r '
+          require "vendor/autoload.php";
+          $openSearch = class_exists(\OpenSearch\Client::class);
+          $elasticsearch = class_exists(\Elastic\Elasticsearch\Client::class) || class_exists(\Elasticsearch\Client::class);
+          if ($openSearch !== (getenv("SEARCH_ENGINE") === "opensearch") || $elasticsearch !== !$openSearch) {
+              throw new \RuntimeException("Only the selected engine client should be installed.");
+          }
+        '
 
     - name: Run tests
       run: vendor/bin/phpunit

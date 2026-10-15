@@ -6,7 +6,7 @@
     </testsuite>
   </testsuites>
   <php>
-    <!-- Elasticsearch host used by the tests, can be overridden by setting the ES_HOST environment variable -->
+    <!-- Elasticsearch/OpenSearch host used by the tests, can be overridden by setting the ES_HOST environment variable -->
     <env name="ES_HOST" value="localhost:9200"/>
   </php>
 </phpunit>

@@ -4,12 +4,14 @@ namespace Wa72\ESTools\tests;
 use Elasticsearch\Client;
 use Elasticsearch\ClientBuilder;
 use Elastic\Elasticsearch\Client as ModernClient;
+use OpenSearch\Client as OpenSearchClient;
+use OpenSearch\GuzzleClientFactory;
 use Elastic\Elasticsearch\ClientBuilder as ModernClientBuilder;
 use Wa72\ESTools\Internal\ClientAdapter;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Base class for tests that need a running Elasticsearch server.
+ * Base class for tests that need a running Elasticsearch or OpenSearch server.
  *
  * The host can be configured with the environment variable ES_HOST (default: localhost:9200).
  * All indices created by tests must start with the prefix "estools_test_", they are removed before and after each test.
@@ -17,7 +19,7 @@ use PHPUnit\Framework\TestCase;
 abstract class ElasticsearchTestCase extends TestCase
 {
     /**
-     * @var Client|ModernClient
+     * @var Client|ModernClient|OpenSearchClient
      */
     protected $client;
 
@@ -26,13 +28,20 @@ abstract class ElasticsearchTestCase extends TestCase
     protected $default_mapping;
     protected $default_settings;
 
-    public static function createClient(): Client|ModernClient
+    public static function createClient(): Client|ModernClient|OpenSearchClient
     {
-        $builder = class_exists(ModernClientBuilder::class) ? ModernClientBuilder::create() : ClientBuilder::create();
         $host = getenv('ES_HOST') ?: 'localhost:9200';
         if (!str_contains($host, '://')) {
             $host = 'http://' . $host;
         }
+        $engine = getenv('SEARCH_ENGINE') ?: 'elasticsearch';
+        if ($engine === 'opensearch') {
+            return (new GuzzleClientFactory())->create(['base_uri' => $host]);
+        }
+        if ($engine !== 'elasticsearch') {
+            throw new \InvalidArgumentException('Unknown SEARCH_ENGINE: ' . $engine);
+        }
+        $builder = class_exists(ModernClientBuilder::class) ? ModernClientBuilder::create() : ClientBuilder::create();
         return $builder->setHosts([$host])->build();
     }
 
@@ -45,7 +54,7 @@ abstract class ElasticsearchTestCase extends TestCase
             $available = false;
         }
         if (!$available) {
-            $message = 'Elasticsearch is not available at ' . (getenv('ES_HOST') ?: 'localhost:9200');
+            $message = (getenv('SEARCH_ENGINE') ?: 'elasticsearch') . ' is not available at ' . (getenv('ES_HOST') ?: 'localhost:9200');
             if (getenv('CI')) {
                 // never silently skip tests in CI
                 $this->fail($message);

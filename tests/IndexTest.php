@@ -55,6 +55,7 @@ class IndexTest extends ElasticsearchTestCase
         $this->assertEquals([], $index->checkSettingsAndMappings());
         $this->assertEquals([], $index->checkAliases());
         $this->assertSame($this->client, $index->getElasticsearchClient());
+        $this->assertSame($this->client, $index->getClient());
 
         // calling prepare() again with the same settings does not create a new version
         $this->assertEquals($real_name, $index->prepare());
